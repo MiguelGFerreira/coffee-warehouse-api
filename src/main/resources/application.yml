@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: coffee-warehouse-api
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/coffee_warehouse}
+    username: ${DB_USER:coffee}
+    password: ${DB_PASSWORD:coffee}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate          # o schema e responsabilidade do Flyway, nunca do Hibernate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 30
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+  info:
+    env:
+      enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /docs
+    operations-sorter: method
+  api-docs:
+    path: /v3/api-docs
+
+server:
+  error:
+    include-message: always
+    include-binding-errors: always
+    include-stacktrace: never
+
+info:
+  app:
+    name: Coffee Warehouse API
+    version: 0.1.0
