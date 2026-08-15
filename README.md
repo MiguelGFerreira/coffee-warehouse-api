@@ -1,4 +1,5 @@
 # Coffee Warehouse API
+[![CI](https://github.com/MiguelGFerreira/coffee-warehouse-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MiguelGFerreira/coffee-warehouse-api/actions/workflows/ci.yml)
 
 API REST de **rastreabilidade e movimentação de lotes de café armazenado**, modelada a partir de conceitos reais de WMS (Warehouse Management System) para armazéns de café.
 
