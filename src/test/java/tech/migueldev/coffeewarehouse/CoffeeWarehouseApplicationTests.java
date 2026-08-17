@@ -17,7 +17,7 @@ class CoffeeWarehouseApplicationTests extends AbstractIntegrationTest {
     private DataSource dataSource;
 
     @Test
-    @DisplayName("contexto sobe e o Flyway aplica as migrations")
+    @DisplayName("context starts and Flyway applies the migrations")
     void contextLoadsAndMigrationsApplied() throws Exception {
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement();
@@ -30,7 +30,7 @@ class CoffeeWarehouseApplicationTests extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("tabelas do baseline existem no schema")
+    @DisplayName("baseline tables exist in the schema")
     void baselineTablesExist() throws Exception {
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement();
@@ -43,7 +43,7 @@ class CoffeeWarehouseApplicationTests extends AbstractIntegrationTest {
             while (rs.next()) {
                 tables.add(rs.getString(1));
             }
-            assertThat(tables).contains("produtor", "armazem", "posicao", "lote");
+            assertThat(tables).contains("producer", "warehouse", "storage_position", "lot");
         }
     }
 }

@@ -8,13 +8,13 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Base para testes de integracao.
+ * Base class for integration tests.
  *
- * Sobe um Postgres real via Testcontainers e deixa o Flyway rodar as migrations
- * contra ele. Nada de H2: o banco de teste e o mesmo do runtime, entao as
- * constraints, tipos NUMERIC e checks sao exercitados de verdade.
+ * Starts a real Postgres through Testcontainers and lets Flyway run the
+ * migrations against it. No H2: the test database is the same engine as the
+ * runtime one, so constraints, NUMERIC types and checks are exercised for real.
  *
- * O container e estatico -> reaproveitado por todas as classes filhas.
+ * The container is static -> reused across every subclass.
  */
 @Testcontainers
 @SpringBootTest

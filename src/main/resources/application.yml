@@ -10,7 +10,7 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: validate          # o schema e responsabilidade do Flyway, nunca do Hibernate
+      ddl-auto: validate          # the schema belongs to Flyway, never to Hibernate
     properties:
       hibernate:
         jdbc:

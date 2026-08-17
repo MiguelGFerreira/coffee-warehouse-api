@@ -15,7 +15,7 @@
     <artifactId>coffee-warehouse-api</artifactId>
     <version>0.1.0</version>
     <name>coffee-warehouse-api</name>
-    <description>API de rastreabilidade e movimentacao de lotes de cafe armazenado</description>
+    <description>Traceability and movement API for stored coffee lots</description>
 
     <properties>
         <java.version>21</java.version>
