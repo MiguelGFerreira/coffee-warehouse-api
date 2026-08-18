@@ -4,8 +4,6 @@ import org.junit.jupiter.api.Tag;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Base class for integration tests.
@@ -14,18 +12,25 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * migrations against it. No H2: the test database is the same engine as the
  * runtime one, so constraints, NUMERIC types and checks are exercised for real.
  *
- * The container is static -> reused across every subclass.
+ * Singleton container pattern: the container is started once from a static
+ * initializer and never stopped, so it outlives every test class in the JVM.
+ * The @Testcontainers/@Container extension would stop it when the first test
+ * class finishes, and the next class -- reusing Spring's cached context, and
+ * with it the cached JDBC URL -- would connect to a port that no longer exists.
+ * Ryuk removes the container when the JVM exits.
  */
-@Testcontainers
 @SpringBootTest
 @Tag("integration")
 public abstract class AbstractIntegrationTest {
 
-    @Container
     @ServiceConnection
     static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>("postgres:16-alpine")
                     .withDatabaseName("coffee_warehouse")
                     .withUsername("coffee")
                     .withPassword("coffee");
+
+    static {
+        POSTGRES.start();
+    }
 }
