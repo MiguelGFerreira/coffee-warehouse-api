@@ -1,5 +1,17 @@
+### Maven ###
 target/
-!.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+.flattened-pom.xml
+*.class
+
+### JVM crash and debug artifacts ###
+hs_err_pid*
+replay_pid*
+.attach_pid*
+
+### Logs ###
+*.log
+logs/
 
 ### IDE ###
 .idea/
@@ -7,15 +19,23 @@ target/
 *.ipr
 *.iws
 .vscode/
-.github/
 .settings/
 .classpath
 .project
+.factorypath
 
 ### OS ###
 .DS_Store
 Thumbs.db
+desktop.ini
 
-### Env ###
+### Local configuration ###
+# Never commit credentials or machine-specific overrides. The compose file and
+# application.yml carry defaults that work out of the box; anything that differs
+# on one machine stays on that machine.
 .env
+.env.*
+!.env.example
 *.local
+**/application-local.yml
+**/application-local.properties
