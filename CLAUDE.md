@@ -92,9 +92,11 @@ Swagger: http://localhost:8080/docs · Health: http://localhost:8080/actuator/he
 
 ## Current state
 
-**Phase 1 done:** Spring Boot 3.5 + Java 21, Docker Compose with Postgres 16, baseline migration (producer, warehouse, storage_position, lot), Actuator, springdoc, CI on GitHub Actions, two integration tests with Testcontainers.
+**Phase 1 done:** Spring Boot 3.5 + Java 21, Docker Compose with Postgres 16, baseline migration (producer, warehouse, storage_position, lot), Actuator, springdoc, CI on GitHub Actions, integration tests with Testcontainers.
 
-**Next: Phase 2 — Registry.** See `docs/ROADMAP.md`.
+**Phase 2 in progress.** Producer and Warehouse are complete and set the pattern to follow: entity extending `AuditableEntity` with the business code as identity, repository, service, `record` DTOs split into create/update/response, thin controller, RFC 7807 errors through `ApiExceptionHandler`, controller test plus a repository slice test for the database constraints.
+
+**Still open in Phase 2:** StoragePosition (including composite code generation) and Lot (including the `LotStatus` enum and the filtered listing). See `docs/ROADMAP.md`.
 
 ---
 
