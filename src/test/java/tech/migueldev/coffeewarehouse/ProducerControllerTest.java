@@ -17,7 +17,6 @@ import tech.migueldev.coffeewarehouse.repository.ProducerRepository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,11 +35,6 @@ class ProducerControllerTest extends AbstractIntegrationTest {
 
     @Autowired
     private ProducerRepository repository;
-
-    @BeforeEach
-    void cleanUp() {
-        repository.deleteAll();
-    }
 
     @Test
     @DisplayName("creates a producer and returns 201 pointing at the new resource")
