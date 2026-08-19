@@ -150,7 +150,7 @@ The integration tests start a real PostgreSQL via Testcontainers and apply the F
 ## Roadmap
 
 - [x] **Phase 1** — Foundation: Docker Compose, Flyway, Actuator, CI, integration test
-- [ ] **Phase 2** — Registry: Producer, Warehouse, StoragePosition, Lot (CRUD, validation, standardized error handling, pagination)
+- [x] **Phase 2** — Registry: Producer, Warehouse, StoragePosition, Lot (CRUD, validation, standardized error handling, pagination)
 - [ ] **Phase 3** — Movement ledger: inbound, transfer, outbound, balance calculation, invariants
 - [ ] **Phase 4** — Shipment and blend: composition, weighted average, FIFO suggestion
 - [ ] **Phase 5** — Finishing: described OpenAPI, data seed, JWT authentication

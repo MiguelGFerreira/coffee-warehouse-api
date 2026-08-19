@@ -12,7 +12,7 @@ Spring Boot 3.5 + Java 21 · Docker Compose (app + Postgres 16) · Flyway with a
 
 ---
 
-## Phase 2 — Registry
+## Phase 2 — Registry ✅
 
 CRUD for Producer, Warehouse, StoragePosition and Lot.
 
@@ -28,6 +28,8 @@ CRUD for Producer, Warehouse, StoragePosition and Lot.
 - Tests: repository (`@DataJpaTest` over Testcontainers) and controller (`@SpringBootTest` + `MockMvc`), covering the happy path and every handled error
 
 **Out of scope for this phase:** anything to do with movement or balance.
+
+**Done when:** all four entities are exposed, every handled error has a test, and `./mvnw verify` is green.
 
 **Commit order**
 ```
