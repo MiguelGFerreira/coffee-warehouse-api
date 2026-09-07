@@ -1,0 +1,285 @@
+package tech.migueldev.coffeewarehouse;
+
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import tech.migueldev.coffeewarehouse.api.dto.InboundRequest;
+import tech.migueldev.coffeewarehouse.api.dto.OutboundRequest;
+import tech.migueldev.coffeewarehouse.api.dto.TransferRequest;
+import tech.migueldev.coffeewarehouse.domain.Lot;
+import tech.migueldev.coffeewarehouse.domain.Producer;
+import tech.migueldev.coffeewarehouse.domain.StoragePosition;
+import tech.migueldev.coffeewarehouse.domain.Warehouse;
+import tech.migueldev.coffeewarehouse.repository.LotRepository;
+import tech.migueldev.coffeewarehouse.repository.ProducerRepository;
+import tech.migueldev.coffeewarehouse.repository.StoragePositionRepository;
+import tech.migueldev.coffeewarehouse.repository.WarehouseRepository;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+@AutoConfigureMockMvc
+class StockMovementControllerTest extends AbstractIntegrationTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private ProducerRepository producerRepository;
+
+    @Autowired
+    private WarehouseRepository warehouseRepository;
+
+    @Autowired
+    private StoragePositionRepository positionRepository;
+
+    @Autowired
+    private LotRepository lotRepository;
+
+    private Lot lot;
+    private StoragePosition positionA;
+    private StoragePosition positionB;
+    private StoragePosition smallPosition;
+
+    @BeforeEach
+    void seed() {
+        Producer producer = producerRepository.save(
+                new Producer("COP-001", "Cooperativa Serra Alta", "Guaxupe", "MG"));
+        Warehouse warehouse = warehouseRepository.save(
+                new Warehouse("WH1", "Armazem Central", "Guaxupe", "MG"));
+
+        positionA = positionRepository.save(
+                new StoragePosition(warehouse, "01", "01", "01", new BigDecimal("60000.000")));
+        positionB = positionRepository.save(
+                new StoragePosition(warehouse, "02", "01", "01", new BigDecimal("60000.000")));
+        smallPosition = positionRepository.save(
+                new StoragePosition(warehouse, "03", "01", "01", new BigDecimal("1000.000")));
+
+        lot = lotRepository.save(new Lot("LOT-001", producer, 2025,
+                new BigDecimal("18000.000"), LocalDate.of(2025, 6, 10)));
+    }
+
+    private void inbound(StoragePosition target, String weight) throws Exception {
+        var request = new InboundRequest(lot.getId(), target.getId(), new BigDecimal(weight), null, "receiving");
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    @DisplayName("an inbound puts weight in a position and moves the lot to STORED")
+    void inboundStoresTheLot() throws Exception {
+        var request = new InboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("12000.000"), null, "receiving");
+
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Location", matchesPattern(".*/api/movements/[0-9]+")))
+                .andExpect(jsonPath("$.type").value("INBOUND"))
+                .andExpect(jsonPath("$.sourcePositionCode").doesNotExist())
+                .andExpect(jsonPath("$.targetPositionCode").value("WH1-A01-B01-L01"));
+
+        mockMvc.perform(get("/api/lots/{id}", lot.getId()))
+                .andExpect(jsonPath("$.status").value("STORED"));
+
+        mockMvc.perform(get("/api/storage-positions/{id}/occupancy", positionA.getId()))
+                .andExpect(jsonPath("$.occupiedKg").value(12000.000))
+                .andExpect(jsonPath("$.availableKg").value(48000.000));
+    }
+
+    @Test
+    @DisplayName("an inbound beyond the capacity of the position is refused with 409")
+    void refusesInboundBeyondCapacity() throws Exception {
+        var request = new InboundRequest(lot.getId(), smallPosition.getId(),
+                new BigDecimal("1000.001"), null, null);
+
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:capacity-exceeded"));
+
+        mockMvc.perform(get("/api/storage-positions/{id}/occupancy", smallPosition.getId()))
+                .andExpect(jsonPath("$.occupiedKg").value(0));
+    }
+
+    @Test
+    @DisplayName("an inactive position refuses to receive stock")
+    void refusesInboundIntoInactivePosition() throws Exception {
+        mockMvc.perform(patch("/api/storage-positions/{id}/deactivate", positionA.getId()))
+                .andExpect(status().isOk());
+
+        var request = new InboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("100.000"), null, null);
+
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:position-not-available"));
+    }
+
+    @Test
+    @DisplayName("a transfer moves weight between positions and leaves the lot balance unchanged")
+    void transferMovesWeightWithoutChangingLotBalance() throws Exception {
+        inbound(positionA, "12000.000");
+
+        var request = new TransferRequest(lot.getId(), positionA.getId(), positionB.getId(),
+                new BigDecimal("5000.000"), null, "consolidation");
+
+        mockMvc.perform(post("/api/movements/transfers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.type").value("TRANSFER"));
+
+        mockMvc.perform(get("/api/storage-positions/{id}/occupancy", positionA.getId()))
+                .andExpect(jsonPath("$.occupiedKg").value(7000.000));
+        mockMvc.perform(get("/api/storage-positions/{id}/occupancy", positionB.getId()))
+                .andExpect(jsonPath("$.occupiedKg").value(5000.000));
+
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(jsonPath("$.storedWeightKg").value(12000.000));
+    }
+
+    @Test
+    @DisplayName("a transfer without balance at the source is refused with 409")
+    void refusesTransferWithoutBalance() throws Exception {
+        inbound(positionA, "1000.000");
+
+        var request = new TransferRequest(lot.getId(), positionA.getId(), positionB.getId(),
+                new BigDecimal("1500.000"), null, null);
+
+        mockMvc.perform(post("/api/movements/transfers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:insufficient-balance"));
+    }
+
+    @Test
+    @DisplayName("a transfer to the same position is refused with 400")
+    void refusesTransferToSamePosition() throws Exception {
+        inbound(positionA, "1000.000");
+
+        var request = new TransferRequest(lot.getId(), positionA.getId(), positionA.getId(),
+                new BigDecimal("100.000"), null, null);
+
+        mockMvc.perform(post("/api/movements/transfers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:invalid-movement"));
+    }
+
+    @Test
+    @DisplayName("an outbound takes weight out and leaves the lot status alone")
+    void outboundLeavesStatusAlone() throws Exception {
+        inbound(positionA, "12000.000");
+
+        var request = new OutboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("12000.000"), null, "shipping");
+
+        mockMvc.perform(post("/api/movements/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.type").value("OUTBOUND"))
+                .andExpect(jsonPath("$.targetPositionCode").doesNotExist());
+
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(jsonPath("$.storedWeightKg").value(0))
+                .andExpect(jsonPath("$.status").value("STORED"));
+    }
+
+    @Test
+    @DisplayName("an outbound beyond the balance is refused with 409")
+    void refusesOutboundBeyondBalance() throws Exception {
+        inbound(positionA, "1000.000");
+
+        var request = new OutboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("1000.001"), null, null);
+
+        mockMvc.perform(post("/api/movements/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:insufficient-balance"));
+    }
+
+    @Test
+    @DisplayName("the statement lists every movement in order with the balance they produce")
+    void statementListsTheHistory() throws Exception {
+        inbound(positionA, "12000.000");
+
+        var transfer = new TransferRequest(lot.getId(), positionA.getId(), positionB.getId(),
+                new BigDecimal("5000.000"), null, null);
+        mockMvc.perform(post("/api/movements/transfers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(transfer)))
+                .andExpect(status().isCreated());
+
+        var outbound = new OutboundRequest(lot.getId(), positionB.getId(),
+                new BigDecimal("2000.000"), null, null);
+        mockMvc.perform(post("/api/movements/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(outbound)))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lotCode").value("LOT-001"))
+                .andExpect(jsonPath("$.netWeightKg").value(18000.000))
+                .andExpect(jsonPath("$.storedWeightKg").value(10000.000))
+                .andExpect(jsonPath("$.entries", hasSize(3)))
+                .andExpect(jsonPath("$.entries[0].type").value("INBOUND"))
+                .andExpect(jsonPath("$.entries[1].type").value("TRANSFER"))
+                .andExpect(jsonPath("$.entries[2].type").value("OUTBOUND"));
+    }
+
+    @Test
+    @DisplayName("returns 404 when the position of a movement does not exist")
+    void returnsNotFoundForUnknownPosition() throws Exception {
+        var request = new InboundRequest(lot.getId(), 999_999L, new BigDecimal("100.000"), null, null);
+
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Storage position 999999 not found"));
+    }
+
+    @Test
+    @DisplayName("rejects a movement with a non-positive weight with 400")
+    void rejectsNonPositiveWeight() throws Exception {
+        var request = new InboundRequest(lot.getId(), positionA.getId(), new BigDecimal("0.000"), null, null);
+
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("weightKg"));
+    }
+}

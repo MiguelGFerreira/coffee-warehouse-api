@@ -102,6 +102,12 @@ public class StockMovementService {
     }
 
     @Transactional(readOnly = true)
+    public StockMovement findById(Long id) {
+        return movements.findById(id)
+                .orElseThrow(() -> ResourceNotFoundException.of("Stock movement", id));
+    }
+
+    @Transactional(readOnly = true)
     public BigDecimal occupancyOf(Long positionId) {
         return movements.occupancyOf(positionId);
     }

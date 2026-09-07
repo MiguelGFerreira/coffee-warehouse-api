@@ -2,10 +2,12 @@ package tech.migueldev.coffeewarehouse.api.controller;
 
 import tech.migueldev.coffeewarehouse.api.dto.LotRequest;
 import tech.migueldev.coffeewarehouse.api.dto.LotResponse;
+import tech.migueldev.coffeewarehouse.api.dto.LotStatementResponse;
 import tech.migueldev.coffeewarehouse.api.dto.LotUpdateRequest;
 import tech.migueldev.coffeewarehouse.domain.Lot;
 import tech.migueldev.coffeewarehouse.domain.LotStatus;
 import tech.migueldev.coffeewarehouse.service.LotService;
+import tech.migueldev.coffeewarehouse.service.StockMovementService;
 
 import jakarta.validation.Valid;
 
@@ -31,9 +33,11 @@ import java.net.URI;
 public class LotController {
 
     private final LotService service;
+    private final StockMovementService movementService;
 
-    public LotController(LotService service) {
+    public LotController(LotService service, StockMovementService movementService) {
         this.service = service;
+        this.movementService = movementService;
     }
 
     @PostMapping
@@ -62,6 +66,20 @@ public class LotController {
 
         return new PagedModel<>(service.search(status, cropYear, producerId, pageable)
                 .map(LotResponse::from));
+    }
+
+    /**
+     * The history of the lot and the balance that history produces.
+     *
+     * The balance is not a stored number being reported back: it is the sum of
+     * the entries listed underneath it, so the statement can be checked by hand.
+     */
+    @GetMapping("/{id}/statement")
+    public LotStatementResponse statement(@PathVariable Long id) {
+        Lot lot = service.findById(id);
+        return LotStatementResponse.of(lot,
+                movementService.balanceOfLot(id),
+                movementService.statementOf(id));
     }
 
     /**

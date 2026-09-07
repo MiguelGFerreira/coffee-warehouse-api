@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Balances are aggregations over the ledger, never stored columns.
@@ -61,6 +62,10 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
             """)
     BigDecimal balanceOfLot(@Param("lotId") Long lotId);
 
-    @EntityGraph(attributePaths = {"sourcePosition", "targetPosition"})
+    @Override
+    @EntityGraph(attributePaths = {"lot", "sourcePosition", "targetPosition"})
+    Optional<StockMovement> findById(Long id);
+
+    @EntityGraph(attributePaths = {"lot", "sourcePosition", "targetPosition"})
     List<StockMovement> findByLotIdOrderByOccurredAtAscIdAsc(Long lotId);
 }

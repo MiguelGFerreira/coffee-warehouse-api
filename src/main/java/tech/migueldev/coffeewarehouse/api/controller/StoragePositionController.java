@@ -1,9 +1,11 @@
 package tech.migueldev.coffeewarehouse.api.controller;
 
 import tech.migueldev.coffeewarehouse.api.dto.StoragePositionRequest;
+import tech.migueldev.coffeewarehouse.api.dto.PositionOccupancyResponse;
 import tech.migueldev.coffeewarehouse.api.dto.StoragePositionResponse;
 import tech.migueldev.coffeewarehouse.api.dto.StoragePositionUpdateRequest;
 import tech.migueldev.coffeewarehouse.domain.StoragePosition;
+import tech.migueldev.coffeewarehouse.service.StockMovementService;
 import tech.migueldev.coffeewarehouse.service.StoragePositionService;
 
 import jakarta.validation.Valid;
@@ -31,9 +33,12 @@ import java.net.URI;
 public class StoragePositionController {
 
     private final StoragePositionService service;
+    private final StockMovementService movementService;
 
-    public StoragePositionController(StoragePositionService service) {
+    public StoragePositionController(StoragePositionService service,
+                                     StockMovementService movementService) {
         this.service = service;
+        this.movementService = movementService;
     }
 
     @PostMapping
@@ -60,6 +65,16 @@ public class StoragePositionController {
 
         return new PagedModel<>(service.search(warehouseId, active, pageable)
                 .map(StoragePositionResponse::from));
+    }
+
+    /**
+     * How full the position is right now, aggregated from the ledger. There is
+     * no occupancy column to read; there is only the history.
+     */
+    @GetMapping("/{id}/occupancy")
+    public PositionOccupancyResponse occupancy(@PathVariable Long id) {
+        StoragePosition position = service.findById(id);
+        return PositionOccupancyResponse.of(position, movementService.occupancyOf(id));
     }
 
     @PutMapping("/{id}")
