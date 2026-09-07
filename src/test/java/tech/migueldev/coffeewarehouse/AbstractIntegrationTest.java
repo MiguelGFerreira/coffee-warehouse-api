@@ -37,6 +37,7 @@ public abstract class AbstractIntegrationTest {
     @BeforeEach
     void resetDatabase() {
         jdbcTemplate.execute(
-                "TRUNCATE TABLE lot, storage_position, warehouse, producer RESTART IDENTITY CASCADE");
+                "TRUNCATE TABLE stock_movement, lot, storage_position, warehouse, producer"
+                        + " RESTART IDENTITY CASCADE");
     }
 }
