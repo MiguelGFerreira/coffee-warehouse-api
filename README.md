@@ -141,7 +141,11 @@ The integration tests start a real PostgreSQL via Testcontainers and apply the F
 
 **Layered with a rich domain, not hexagonal.** In a project this size, ports/adapters is ceremony with no payoff. Business rules live in the entity when they belong to it; the service orchestrates; the controller is thin.
 
-**Concurrency control.** Two simultaneous transfers into the same position could blow past capacity. Handled with optimistic locking (`@Version`) on the entities — the `version` columns have been there since the baseline migration.
+**Concurrency control.** Two simultaneous movements into the same position could blow past capacity, and an append-only ledger makes that harder than it looks: recording a movement only inserts a row, so a plain `@Version` on the position would never see a conflict — both transactions read the same occupancy, both find room, both insert.
+
+Positions are loaded with `OPTIMISTIC_FORCE_INCREMENT`, which bumps the version even though the row itself does not change. That makes the position the serialization point of its own invariant, which is the job of an aggregate root. The transaction that loses the race gets `409` with a problem type telling it to retry — nothing is wrong with the request itself.
+
+Optimistic rather than pessimistic because contention on a single position is rare in a warehouse: two operators putting stock into the same bin at the same instant is the exception, and paying for a row lock on every movement to serialize it would be paying for the exception all day. The trade is a retry when it does happen.
 
 **English domain vocabulary.** The domain was originally modeled in Portuguese and translated before Phase 2. The reasoning, the vocabulary table and the one-off migration exception it required are recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -151,7 +155,7 @@ The integration tests start a real PostgreSQL via Testcontainers and apply the F
 
 - [x] **Phase 1** — Foundation: Docker Compose, Flyway, Actuator, CI, integration test
 - [x] **Phase 2** — Registry: Producer, Warehouse, StoragePosition, Lot (CRUD, validation, standardized error handling, pagination)
-- [ ] **Phase 3** — Movement ledger: inbound, transfer, outbound, balance calculation, invariants
+- [x] **Phase 3** — Movement ledger: inbound, transfer, outbound, balance calculation, invariants
 - [ ] **Phase 4** — Shipment and blend: composition, weighted average, FIFO suggestion
 - [ ] **Phase 5** — Finishing: described OpenAPI, data seed, JWT authentication
 

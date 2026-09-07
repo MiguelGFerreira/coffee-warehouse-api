@@ -86,7 +86,7 @@ Swagger: http://localhost:8080/docs · Health: http://localhost:8080/actuator/he
 - picking suggestion follows FIFO by crop year
 - shipment blend: moisture and classification averaged **weighted by weight**
 
-**Concurrency:** two simultaneous transfers into the same position could blow past capacity. Solved with optimistic locking — the `version` column has existed on every table since V1.
+**Concurrency:** two simultaneous movements into the same position could blow past capacity. The `version` column existing is not enough on its own: recording a movement only INSERTs into the ledger, so a plain `@Version` on the position never sees a conflict. Positions are therefore loaded with `OPTIMISTIC_FORCE_INCREMENT`, which bumps the version even though the row does not change and makes the position the serialization point of its own invariant. The loser gets 409, not 500.
 
 ---
 
@@ -96,7 +96,9 @@ Swagger: http://localhost:8080/docs · Health: http://localhost:8080/actuator/he
 
 **Phase 2 done:** Producer, Warehouse, StoragePosition and Lot. The pattern every entity follows: entity extending `AuditableEntity` with the business code as identity, repository, service, `record` DTOs split into create/update/response, thin controller, RFC 7807 errors through `ApiExceptionHandler`, a controller test and a repository slice test for the database constraints.
 
-**Next: Phase 3 — movement ledger.** See `docs/ROADMAP.md`.
+**Phase 3 done:** append-only `stock_movement` ledger, inbound/transfer/outbound, balances by aggregation, lot statement and position occupancy, and the concurrency proof. `StockMovement` is the one entity that does **not** extend `AuditableEntity`: an append-only row has no `updated_at` and no `version` to carry.
+
+**Next: Phase 4 — shipment and blend.** See `docs/ROADMAP.md`.
 
 ---
 

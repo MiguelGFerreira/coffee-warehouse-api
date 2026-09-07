@@ -47,7 +47,7 @@ feat(api): lot endpoints with filters and pagination
 
 ---
 
-## Phase 3 — Movement ledger
+## Phase 3 — Movement ledger ✅
 
 The heart of the project. This is the phase that separates this repo from a CRUD.
 

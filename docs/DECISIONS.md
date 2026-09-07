@@ -57,3 +57,65 @@ and destroyed per test run. The alternative would have put a rename-everything
 migration in the permanent history of a repository whose purpose is to be read.
 
 **This exception is closed.** From `V2` onward, migrations are immutable.
+
+**Consequence for anyone with an older local volume.** Flyway records the
+checksum of every migration it applies, so a database created before the rewrite
+refuses to start against the new `V1`:
+
+```
+Migration checksum mismatch for migration version 1
+```
+
+The fix is `docker compose down -v` and a fresh start. Testcontainers builds a
+new database per run and CI clones from scratch, so neither ever saw this --
+only a developer machine that had run the project before the rewrite does.
+
+
+---
+
+## D2 — Position capacity is guarded by a forced version increment
+
+**Date:** 2026-09-07 · **Status:** accepted
+
+Two movements into the same position, at the same time, must not be able to push
+it past `capacity_kg`.
+
+**Why the obvious answer does not work.** Every table has carried a `version`
+column since `V1`, so it is tempting to say the invariant is already covered by
+optimistic locking. It is not. Recording a movement reads
+`SUM(weight_kg)` over the ledger and then INSERTs a row; it never updates
+`storage_position`. With nothing writing to that row, its version never moves
+and there is no conflict to detect. Under `READ COMMITTED` neither transaction
+sees the other's uncommitted movement either. Both find room, both insert, and
+the position ends up over capacity with no error raised anywhere.
+
+**What is done instead.** Positions are loaded with
+`LockModeType.OPTIMISTIC_FORCE_INCREMENT`. Hibernate then issues a version
+UPDATE on the position at commit even though no field changed. Two overlapping
+transactions both read version *N*; the first commits *N+1*, the second finds
+its UPDATE matching zero rows and fails with
+`OptimisticLockingFailureException`, which the API returns as `409` with
+`urn:problem-type:concurrent-modification`.
+
+That is the aggregate-root argument stated in code: the position owns an
+invariant that spans its movements, so the position's version is where those
+movements serialize.
+
+**Why not pessimistic.** `SELECT ... FOR UPDATE` would also be correct and is
+simpler to explain. It pays a row lock on every movement to serialize a
+collision that is rare in a warehouse -- two operators filling the same bin in
+the same instant is the exception. Optimistic pays nothing until the collision
+happens and costs a retry when it does.
+
+**Why not SERIALIZABLE.** Postgres would detect the read-write conflict and
+abort one transaction, which is arguably the most honest fit for a ledger. It
+was rejected for this project because it pushes retry handling into every caller
+for a guarantee the forced increment already gives on the one row that matters.
+
+**The test that keeps this honest.** `LedgerConcurrencyTest` forces the
+interleaving with a barrier rather than hoping two threads collide. Two earlier
+versions of that test passed against a deliberately broken implementation --
+first because the threads never overlapped, then because `markStored()` dirtied
+the *lot* and the lot's own version was quietly doing the serializing. The test
+as it stands fails when the lock mode is removed, which is the only property
+that makes it worth having.
