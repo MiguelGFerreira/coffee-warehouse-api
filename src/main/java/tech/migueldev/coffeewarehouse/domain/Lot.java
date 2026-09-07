@@ -12,6 +12,8 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import tech.migueldev.coffeewarehouse.api.exception.LotNotMovableException;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Objects;
@@ -93,6 +95,29 @@ public class Lot extends AuditableEntity {
         this.screenSize = normalizeOptional(screenSize);
         this.defectType = normalizeOptional(defectType);
         this.cupQuality = normalizeOptional(cupQuality);
+    }
+
+    /**
+     * A SHIPPED lot is terminal: it has left the warehouse and its history is
+     * closed. The rule lives here rather than in the service because it is a
+     * property of the lot, not of the operation being attempted.
+     */
+    public void ensureMovable() {
+        if (status == LotStatus.SHIPPED) {
+            throw new LotNotMovableException(
+                    "Lot %s is %s and accepts no movement".formatted(code, status));
+        }
+    }
+
+    /**
+     * The one transition Phase 3 owns: the first inbound puts a lot away.
+     * Idempotent, so a second inbound does not care. RESERVED and SHIPPED are
+     * driven by the shipment, not by the ledger.
+     */
+    public void markStored() {
+        if (status == LotStatus.AWAITING_ALLOCATION) {
+            this.status = LotStatus.STORED;
+        }
     }
 
     private static String normalizeCode(String code) {

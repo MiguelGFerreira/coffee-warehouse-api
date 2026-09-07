@@ -10,6 +10,9 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import tech.migueldev.coffeewarehouse.api.exception.CapacityExceededException;
+import tech.migueldev.coffeewarehouse.api.exception.PositionNotAvailableException;
+
 import java.math.BigDecimal;
 import java.util.Objects;
 
@@ -99,6 +102,33 @@ public class StoragePosition extends AuditableEntity {
      */
     public void changeCapacity(BigDecimal capacityKg) {
         this.capacityKg = capacityKg;
+    }
+
+    /**
+     * The capacity invariant, stated by the thing it constrains.
+     *
+     * The current occupancy is passed in rather than read here: it is an
+     * aggregation over the ledger, and an entity that queried a repository to
+     * answer a question about itself would be a worse trade than this parameter.
+     */
+    public void ensureFits(BigDecimal currentOccupancy, BigDecimal incomingWeightKg) {
+        BigDecimal resulting = currentOccupancy.add(incomingWeightKg);
+        if (resulting.compareTo(capacityKg) > 0) {
+            throw new CapacityExceededException(
+                    "Position %s holds %s kg of %s kg; %s kg more would exceed it"
+                            .formatted(code, currentOccupancy, capacityKg, incomingWeightKg));
+        }
+    }
+
+    /**
+     * Stock can always leave a deactivated position -- that is how one is
+     * emptied before it goes out of service for good. It just cannot receive.
+     */
+    public void ensureCanReceive() {
+        if (!active) {
+            throw new PositionNotAvailableException(
+                    "Position %s is inactive and cannot receive stock".formatted(code));
+        }
     }
 
     public void activate() {

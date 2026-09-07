@@ -3,6 +3,7 @@ package tech.migueldev.coffeewarehouse.api.exception;
 import jakarta.servlet.http.HttpServletRequest;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -48,6 +49,52 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     ProblemDetail handleDuplicateCode(DuplicateCodeException ex, HttpServletRequest request) {
         return problem(HttpStatus.CONFLICT, "Code already in use", ex.getMessage(),
                 "duplicate-code", request);
+    }
+
+    @ExceptionHandler(CapacityExceededException.class)
+    ProblemDetail handleCapacityExceeded(CapacityExceededException ex, HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Position capacity exceeded", ex.getMessage(),
+                "capacity-exceeded", request);
+    }
+
+    @ExceptionHandler(InsufficientBalanceException.class)
+    ProblemDetail handleInsufficientBalance(InsufficientBalanceException ex,
+                                            HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Insufficient balance", ex.getMessage(),
+                "insufficient-balance", request);
+    }
+
+    @ExceptionHandler(LotNotMovableException.class)
+    ProblemDetail handleLotNotMovable(LotNotMovableException ex, HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Lot accepts no movement", ex.getMessage(),
+                "lot-not-movable", request);
+    }
+
+    @ExceptionHandler(PositionNotAvailableException.class)
+    ProblemDetail handlePositionNotAvailable(PositionNotAvailableException ex,
+                                              HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Position not available", ex.getMessage(),
+                "position-not-available", request);
+    }
+
+    @ExceptionHandler(InvalidMovementException.class)
+    ProblemDetail handleInvalidMovement(InvalidMovementException ex, HttpServletRequest request) {
+        return problem(HttpStatus.BAD_REQUEST, "Invalid movement", ex.getMessage(),
+                "invalid-movement", request);
+    }
+
+    /**
+     * Someone else changed the position between the moment this request read its
+     * occupancy and the moment it tried to commit. Nothing is wrong with the
+     * request itself -- retrying it is the correct response, which is why the
+     * client is told 409 and not 500.
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    ProblemDetail handleOptimisticLockingFailure(OptimisticLockingFailureException ex,
+                                                  HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Concurrent modification",
+                "The resource was modified by another request; retry the operation",
+                "concurrent-modification", request);
     }
 
     /**
