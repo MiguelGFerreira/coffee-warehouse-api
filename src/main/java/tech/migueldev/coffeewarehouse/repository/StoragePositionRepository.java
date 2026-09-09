@@ -41,9 +41,16 @@ public interface StoragePositionRepository extends JpaRepository<StoragePosition
      * both read the same occupancy, both find room, and both insert. Forcing
      * the increment turns the position into the serialization point of its own
      * invariant, which is exactly the job of an aggregate root.
+     *
+     * Deliberately no {@code @EntityGraph} here, unlike every other finder in
+     * this interface. Hibernate cascades the lock mode to whatever the query
+     * join-fetches, so fetching the warehouse would force *its* version up too
+     * and quietly promote the whole warehouse to the serialization point --
+     * two movements into two unrelated positions of the same warehouse would
+     * collide and get a 409 neither of them earned. Nothing on the movement
+     * path reads the warehouse, so the association stays lazy.
      */
     @Lock(LockModeType.OPTIMISTIC_FORCE_INCREMENT)
-    @EntityGraph(attributePaths = "warehouse")
     @Query("SELECT p FROM StoragePosition p WHERE p.id = :id")
     Optional<StoragePosition> findByIdAndLock(@Param("id") Long id);
 
