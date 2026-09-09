@@ -79,6 +79,106 @@ The heart of the project. This is the phase that separates this repo from a CRUD
 - Lots transition to `SHIPPED` when the shipment is confirmed
 - Tests covering the weighted calculation with numbers that can be checked by hand
 
+### The six decisions this phase rests on
+
+**1. Reserved weight is derived, not flagged.** `RESERVED` is a dead enum value
+until now. The naive way to give it meaning breaks rule 1: nothing physically
+moves when a lot is reserved, so its ledger balance is untouched and two
+shipments could each reserve the same 10,000 kg. Instead:
+
+```
+available = ledger balance − Σ(weights in items of DRAFT shipments)
+```
+
+Reserved weight is an aggregation over `shipment_item`, exactly as occupancy is
+an aggregation over `stock_movement`. The same philosophy applied a second time,
+which is the answer to "why no `reserved_kg` column?". A lot-level flag was
+rejected as too coarse — it would make a lot un-shippable in parts, which
+contradicts `shipment_item` carrying a weight at all. A `RESERVE` movement type
+was rejected outright: reserved stock is still physically in the position, so it
+would corrupt occupancy.
+
+**2. The item names its source position.** An outbound needs a source and a lot
+can sit in several positions. `shipment_item` carries `(lot, source_position,
+weight)`, which makes it a concrete picking instruction, makes confirmation
+deterministic, and lets the balance check reuse `balanceOfLotAt` unchanged. The
+FIFO endpoint *proposes* those triples; the item *commits* them. Suggestion
+advises, item commits.
+
+**3. Confirmation goes through `StockMovementService.recordOutbound`.** The
+shipment gets no private door into the ledger. Every Phase 3 invariant — position
+locking, balance checks, `ensureMovable` — applies for free, and the concurrency
+story stays a single story. Order matters: write the movements first, mark lots
+`SHIPPED` after, or `ensureMovable` rejects its own shipment.
+
+**4. A partial shipment must not mark the lot `SHIPPED`.** This is the trap in
+the wording above. `SHIPPED` is terminal and immutable, so if 5,000 kg of a
+12,000 kg lot ships and the lot goes `SHIPPED`, the remaining 7,000 kg is
+stranded in the warehouse forever — no movement will ever be accepted for it
+again. On confirmation a lot goes `SHIPPED` only if its remaining ledger balance
+is zero; otherwise back to `STORED`.
+
+**5. Classification is composed by weight, never averaged.** Moisture is numeric
+and averages cleanly:
+
+```
+Σ(moisture_i × weight_i) / Σ(weight_i)
+```
+
+`screen_size`, `defect_type` and `cup_quality` are categorical — there is no
+average of `HARD` and `SOFT`. Each is reported as a **weighted composition**:
+every distinct value with its share of the total weight. For screen size this is
+not a workaround but the trade standard itself: sieve analysis is reported as
+the mass percentage retained on each screen.
+
+Two refinements are deliberately out of scope, noted where they would land:
+
+- The true COB standard for *defect type* averages the **defect count** weighted
+  by weight and maps the result back to a type. Our schema stores the label
+  (`T6`), not a count, so it is not computable without a new column.
+- Trade practice treats *cup quality* as limited by the *worst* component rather
+  than by an average. Surfacing that would need `cup_quality` to become a ranked
+  enum.
+
+Numeric care: a bare `BigDecimal.divide` throws on a non-terminating decimal, so
+scale and `RoundingMode.HALF_UP` are always explicit. Lots with a null moisture
+are excluded from **both** sides of the ratio, and the weight the average
+actually covers is reported alongside it so the number cannot quietly lie.
+
+**6. The blend is derived while DRAFT and snapshotted at confirmation.** This
+looks like a rule 1 violation and is not. `updateClassification` lets a lot's
+moisture be revised after the fact, so a confirmed shipment recomputed from
+today's lot data would report a blend that was never shipped. A snapshot is not
+a cached balance that can drift; it is a historical fact frozen at a point in
+time, the same reason `occurred_at` exists. Derive while it can still change,
+freeze when it becomes history.
+
+### Lifecycle
+
+```
+DRAFT --confirm--> CONFIRMED   (terminal)
+      --cancel---> CANCELLED   (terminal)
+```
+
+A confirmed shipment is never cancelled: its movements are in the ledger, and
+the ledger is corrected by recording the opposite, never by deletion. Items can
+only be added, changed or removed while the shipment is `DRAFT`.
+
+### Commit order
+
+```
+docs: plan phase 4
+feat(db): shipment and shipment item migration
+feat(domain): shipment entity with blend calculation
+test: blend weighted average with hand-checkable numbers
+feat(service): shipment composition and reservation
+feat(service): confirmation writing outbound movements
+feat(api): shipment endpoints
+feat(api): fifo picking suggestion
+test: shipment lifecycle and partial-shipment status
+docs: close phase 4
+```
+
 ---
 
 ## Phase 5 — Finishing
