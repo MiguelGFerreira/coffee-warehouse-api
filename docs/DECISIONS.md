@@ -119,3 +119,40 @@ first because the threads never overlapped, then because `markStored()` dirtied
 the *lot* and the lot's own version was quietly doing the serializing. The test
 as it stands fails when the lock mode is removed, which is the only property
 that makes it worth having.
+
+
+---
+
+## D3 — The capacity invariant is guarded from both sides
+
+**Date:** 2026-09-09 · **Status:** accepted
+
+The invariant is *stored weight never exceeds capacity*. It has two sides, and
+Phase 3 originally guarded only one.
+
+`ensureFits` refuses weight arriving into a position that has no room for it.
+Nothing, however, refused `PUT /api/storage-positions/{id}` re-rating a position
+holding 12,000 kg down to 100 kg. The registry endpoint could do what no
+movement was allowed to do, and the occupancy endpoint would then report
+`availableKg: -11900`.
+
+**What was done.** `changeCapacity` now takes the current occupancy alongside
+the new rating and refuses to drop below it, in the same shape as `ensureFits`
+and raising the same `CapacityExceededException`. One invariant, one problem
+type: a client that already handles `urn:problem-type:capacity-exceeded` needs
+no new branch, and the API does not grow a second name for the same rule.
+
+**Why the service passes the occupancy in.** For the same reason `ensureFits`
+takes it as a parameter: it is an aggregation over the ledger, and an entity
+that reached for a repository to answer a question about itself would be a
+worse trade than the argument.
+
+**Why this path needs no forced version increment.** A movement gets
+`OPTIMISTIC_FORCE_INCREMENT` because it never writes to the position row (D2).
+A re-rating does write to it, so the ordinary `@Version` already serializes it
+against an inbound racing to fill the position it is shrinking; the loser gets
+the same `409`.
+
+**What is deliberately still allowed.** Re-rating down to exactly the current
+occupancy succeeds — a full position can be re-rated to full. The rule is
+"cannot fall below what is stored", not "cannot shrink".

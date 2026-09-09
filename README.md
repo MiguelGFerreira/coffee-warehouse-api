@@ -69,7 +69,7 @@ erDiagram
 
 ### Domain invariants
 
-- The sum allocated to a position never exceeds `capacity_kg`
+- The sum allocated to a position never exceeds `capacity_kg` — which also means a position cannot be re-rated below what it already holds
 - A transfer requires sufficient balance at the source position
 - A lot with status `SHIPPED` is immutable (terminal state)
 - Picking suggestion follows FIFO by crop year
