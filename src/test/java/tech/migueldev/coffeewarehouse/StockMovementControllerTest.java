@@ -5,12 +5,14 @@ import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import tech.migueldev.coffeewarehouse.api.dto.InboundRequest;
 import tech.migueldev.coffeewarehouse.api.dto.OutboundRequest;
+import tech.migueldev.coffeewarehouse.api.dto.StoragePositionUpdateRequest;
 import tech.migueldev.coffeewarehouse.api.dto.TransferRequest;
 import tech.migueldev.coffeewarehouse.domain.Lot;
 import tech.migueldev.coffeewarehouse.domain.Producer;
@@ -29,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -54,6 +57,9 @@ class StockMovementControllerTest extends AbstractIntegrationTest {
 
     @Autowired
     private LotRepository lotRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     private Lot lot;
     private StoragePosition positionA;
@@ -257,6 +263,87 @@ class StockMovementControllerTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.entries[0].type").value("INBOUND"))
                 .andExpect(jsonPath("$.entries[1].type").value("TRANSFER"))
                 .andExpect(jsonPath("$.entries[2].type").value("OUTBOUND"));
+    }
+
+    /**
+     * The other direction of the capacity invariant. Nothing stops an operator
+     * from re-rating a position, so the rule has to hold when the bar is
+     * lowered towards the weight, not only when weight is raised towards the bar.
+     */
+    @Test
+    @DisplayName("a capacity re-rated below what the position already holds is refused with 409")
+    void refusesCapacityBelowCurrentOccupancy() throws Exception {
+        inbound(positionA, "12000.000");
+
+        var request = new StoragePositionUpdateRequest(new BigDecimal("11999.999"));
+
+        mockMvc.perform(put("/api/storage-positions/{id}", positionA.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:capacity-exceeded"));
+
+        mockMvc.perform(get("/api/storage-positions/{id}/occupancy", positionA.getId()))
+                .andExpect(jsonPath("$.capacityKg").value(60000.000))
+                .andExpect(jsonPath("$.availableKg").value(48000.000));
+    }
+
+    @Test
+    @DisplayName("a capacity re-rated down to exactly what is stored is accepted")
+    void acceptsCapacityMatchingCurrentOccupancy() throws Exception {
+        inbound(positionA, "12000.000");
+
+        var request = new StoragePositionUpdateRequest(new BigDecimal("12000.000"));
+
+        mockMvc.perform(put("/api/storage-positions/{id}", positionA.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.capacityKg").value(12000.000));
+
+        mockMvc.perform(get("/api/storage-positions/{id}/occupancy", positionA.getId()))
+                .andExpect(jsonPath("$.availableKg").value(0));
+    }
+
+    /**
+     * The status is set with direct SQL because nothing in the API can produce
+     * it yet: SHIPPED is written by the shipment, in Phase 4. The rule it guards
+     * exists now, though, so it is tested now rather than on trust.
+     */
+    @Test
+    @DisplayName("a SHIPPED lot accepts no movement")
+    void refusesAnyMovementOnAShippedLot() throws Exception {
+        inbound(positionA, "12000.000");
+        jdbcTemplate.update("UPDATE lot SET status = 'SHIPPED' WHERE id = ?", lot.getId());
+
+        var request = new InboundRequest(lot.getId(), positionB.getId(),
+                new BigDecimal("100.000"), null, null);
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:lot-not-movable"));
+
+        var transfer = new TransferRequest(lot.getId(), positionA.getId(), positionB.getId(),
+                new BigDecimal("100.000"), null, null);
+        mockMvc.perform(post("/api/movements/transfers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(transfer)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:lot-not-movable"));
+
+        var outbound = new OutboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("100.000"), null, null);
+        mockMvc.perform(post("/api/movements/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(outbound)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:lot-not-movable"));
+
+        // The ledger is untouched: the only entry is the one from before.
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(jsonPath("$.entries", hasSize(1)))
+                .andExpect(jsonPath("$.storedWeightKg").value(12000.000));
     }
 
     @Test
