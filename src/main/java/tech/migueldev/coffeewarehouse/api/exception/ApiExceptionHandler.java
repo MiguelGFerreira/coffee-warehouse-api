@@ -84,6 +84,19 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "position-not-available", request);
     }
 
+    @ExceptionHandler(ShipmentNotEditableException.class)
+    ProblemDetail handleShipmentNotEditable(ShipmentNotEditableException ex,
+                                            HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Shipment no longer editable", ex.getMessage(),
+                "shipment-not-editable", request);
+    }
+
+    @ExceptionHandler(EmptyShipmentException.class)
+    ProblemDetail handleEmptyShipment(EmptyShipmentException ex, HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Shipment has no items", ex.getMessage(),
+                "empty-shipment", request);
+    }
+
     @ExceptionHandler(InvalidMovementException.class)
     ProblemDetail handleInvalidMovement(InvalidMovementException ex, HttpServletRequest request) {
         return problem(HttpStatus.BAD_REQUEST, "Invalid movement", ex.getMessage(),
