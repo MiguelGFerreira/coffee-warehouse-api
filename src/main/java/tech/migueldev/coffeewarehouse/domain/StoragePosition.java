@@ -97,11 +97,24 @@ public class StoragePosition extends AuditableEntity {
 
     /**
      * Capacity is the one thing that can change: a position can be re-rated.
-     * Once the ledger exists this will have to refuse a capacity below what is
-     * already stored here -- that check belongs to Phase 3, with the balance.
+     *
+     * The new rating cannot fall below what the ledger already says is sitting
+     * here. There is only one invariant -- stored weight never exceeds capacity
+     * -- and it can be broken from either side: by raising the weight, or by
+     * lowering the bar. Guarding only the first would let a PUT on the registry
+     * do what no movement is allowed to do, and leave the occupancy endpoint
+     * reporting negative availability.
+     *
+     * Emptying the position first is what makes a genuine downgrade possible,
+     * which is the same order of operations the warehouse follows anyway.
      */
-    public void changeCapacity(BigDecimal capacityKg) {
-        this.capacityKg = capacityKg;
+    public void changeCapacity(BigDecimal newCapacityKg, BigDecimal currentOccupancy) {
+        if (newCapacityKg.compareTo(currentOccupancy) < 0) {
+            throw new CapacityExceededException(
+                    "Position %s holds %s kg; capacity cannot be re-rated to %s kg"
+                            .formatted(code, currentOccupancy, newCapacityKg));
+        }
+        this.capacityKg = newCapacityKg;
     }
 
     /**

@@ -18,11 +18,14 @@ public class StoragePositionService {
 
     private final StoragePositionRepository repository;
     private final WarehouseService warehouseService;
+    private final StockMovementService movementService;
 
     public StoragePositionService(StoragePositionRepository repository,
-                                  WarehouseService warehouseService) {
+                                  WarehouseService warehouseService,
+                                  StockMovementService movementService) {
         this.repository = repository;
         this.warehouseService = warehouseService;
+        this.movementService = movementService;
     }
 
     /**
@@ -42,10 +45,20 @@ public class StoragePositionService {
         return repository.save(position);
     }
 
+    /**
+     * Re-rating a position is the other way its capacity invariant can be
+     * broken, so the current occupancy is read from the ledger and the entity
+     * gets to refuse.
+     *
+     * No forced version increment here, unlike a movement: this really does
+     * update the position row, so the ordinary {@code @Version} already
+     * serializes it against any inbound racing to fill the position it is
+     * shrinking. The loser of that race gets the same 409.
+     */
     @Transactional
     public StoragePosition update(Long id, StoragePositionUpdateRequest request) {
         StoragePosition position = findById(id);
-        position.changeCapacity(request.capacityKg());
+        position.changeCapacity(request.capacityKg(), movementService.occupancyOf(id));
         return position;
     }
 
