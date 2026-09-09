@@ -144,6 +144,57 @@ public class Lot extends AuditableEntity {
         }
     }
 
+    /**
+     * The lot is committed to a draft shipment.
+     *
+     * The status is a coarse label -- "is any of this lot spoken for?" -- and
+     * nothing more. It is not the reservation itself: <em>how much</em> is
+     * committed is always summed from the draft shipment items, never stored,
+     * for the same reason occupancy is never stored. The label exists because
+     * the lifecycle has a name for this state; the number exists because only
+     * the number can be trusted.
+     *
+     * Kept in step by being recomputed at every transition rather than
+     * incremented, which is what stops it drifting from the items it describes.
+     */
+    public void markReserved() {
+        if (status == LotStatus.STORED) {
+            this.status = LotStatus.RESERVED;
+        }
+    }
+
+    /**
+     * The last draft shipment holding this lot let it go. The caller checks
+     * that no other one still does -- this only knows how to move the label.
+     */
+    public void releaseReservation() {
+        if (status == LotStatus.RESERVED) {
+            this.status = LotStatus.STORED;
+        }
+    }
+
+    /**
+     * The lot has left the warehouse for good.
+     *
+     * Only correct once nothing of it remains stored: SHIPPED is terminal and
+     * refuses every later movement, so marking a partially dispatched lot would
+     * strand whatever is still on the floor. The caller checks the balance; the
+     * rule that SHIPPED is a one-way door lives in {@link #ensureMovable()}.
+     */
+    public void markShipped() {
+        this.status = LotStatus.SHIPPED;
+    }
+
+    /**
+     * Dispatched, but not all of it: whatever is left is ordinary stored stock
+     * again, free to be picked for another shipment.
+     */
+    public void returnToStored() {
+        if (status == LotStatus.RESERVED) {
+            this.status = LotStatus.STORED;
+        }
+    }
+
     private static String normalizeCode(String code) {
         return code == null ? null : code.trim().toUpperCase();
     }

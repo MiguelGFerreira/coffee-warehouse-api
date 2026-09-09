@@ -84,6 +84,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "position-not-available", request);
     }
 
+    @ExceptionHandler(InsufficientAvailabilityException.class)
+    ProblemDetail handleInsufficientAvailability(InsufficientAvailabilityException ex,
+                                                 HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Insufficient availability", ex.getMessage(),
+                "insufficient-availability", request);
+    }
+
     @ExceptionHandler(ShipmentNotEditableException.class)
     ProblemDetail handleShipmentNotEditable(ShipmentNotEditableException ex,
                                             HttpServletRequest request) {

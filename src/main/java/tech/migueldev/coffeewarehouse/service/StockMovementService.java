@@ -125,6 +125,15 @@ public class StockMovementService {
         return movements.balanceOfLot(lotId);
     }
 
+    /**
+     * How much of one lot is sitting at one position. The number a shipment has
+     * to respect before promising any of it away.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal balanceOfLotAt(Long lotId, Long positionId) {
+        return movements.balanceOfLotAt(lotId, positionId);
+    }
+
     @Transactional(readOnly = true)
     public List<StockMovement> statementOf(Long lotId) {
         return movements.findByLotIdOrderByOccurredAtAscIdAsc(lotId);

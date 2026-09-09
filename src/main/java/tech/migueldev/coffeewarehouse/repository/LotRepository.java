@@ -39,9 +39,13 @@ public interface LotRepository extends JpaRepository<Lot, Long> {
      * serialization point of its own invariant, exactly as D2 does for the
      * position.
      *
-     * Only an inbound needs this. A transfer or an outbound cannot change what
-     * has been received, so paying for it there would buy nothing and would turn
-     * two unrelated transfers of the same lot into a spurious 409.
+     * Used by an inbound, and by anything that claims a lot for a shipment --
+     * availability is summed the same way, from rows that are only ever
+     * inserted, and markReserved() dirties the row only on the first claim.
+     * A transfer or an outbound does not need it: neither changes what has been
+     * received or what is spoken for, so paying for it there would buy nothing
+     * and would turn two unrelated transfers of the same lot into a spurious
+     * 409.
      *
      * Deliberately no {@code @EntityGraph} here, unlike every other finder in
      * this interface. Hibernate cascades the lock mode to whatever the query
