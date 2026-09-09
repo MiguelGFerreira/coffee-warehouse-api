@@ -156,3 +156,67 @@ the same `409`.
 **What is deliberately still allowed.** Re-rating down to exactly the current
 occupancy succeeds — a full position can be re-rated to full. The rule is
 "cannot fall below what is stored", not "cannot shrink".
+
+
+---
+
+## D4 — The lot is the second serialization point, and the lock must not leak
+
+**Date:** 2026-09-09 · **Status:** accepted
+
+`net_weight_kg` is what the producer delivered and it never changes, so it is a
+ceiling on everything the ledger can record arriving for that lot. Phase 3 did
+not enforce it: a 100 kg lot could be received 1,000,000 kg at a time.
+
+**Why the ceiling counts receipts, not balance.** A lot that arrived at 12,000 kg
+and shipped out entirely has a balance of zero, but that coffee is gone — it does
+not become receivable again. The cap is on cumulative `INBOUND`, which also lets
+a lot be put away in parts across several positions and still add up to exactly
+its net weight.
+
+**Why the lot needs a forced version increment too.** Exactly the D2 argument,
+one aggregate over. Only the *first* inbound dirties the lot row, through
+`markStored()`; every one after that leaves it untouched, so two concurrent
+inbounds into two *different* positions would both read the same total received,
+both find room under the net weight, and both insert. An inbound now loads the
+lot with `OPTIMISTIC_FORCE_INCREMENT` as well. A transfer and an outbound do
+not: neither can change what has been received, and forcing the increment there
+would turn two unrelated transfers of the same lot into a 409 neither earned.
+
+### The bug this uncovered
+
+Writing the test that proves the lot defends its own ceiling exposed a defect in
+D2's implementation. `findByIdAndLock` on the position combined
+`@Lock(OPTIMISTIC_FORCE_INCREMENT)` with `@EntityGraph("warehouse")`, and
+**Hibernate cascades the lock mode to whatever the query join-fetches.** Every
+movement was therefore forcing the version of the *warehouse* up as well:
+
+```
+update warehouse set version=? where id=? and version=?
+```
+
+The serialization point was not the position. It was the entire warehouse. Two
+operators putting stock into two completely unrelated bins of the same warehouse
+would collide, and one would get a `409` it had done nothing to earn — the exact
+cost D2 rejected pessimistic locking to avoid, paid anyway and at a far coarser
+grain. The concurrency test never caught it because a warehouse-wide lock is
+strictly stronger than a position-wide one: it made the assertion pass for the
+wrong reason.
+
+Both locking finders now fetch nothing. Neither the movement path nor the
+inbound path reads the warehouse or the producer, so both associations stay
+lazy and each lock reaches exactly one row.
+
+### What keeps this honest
+
+Each race isolates one aggregate, which takes deliberate setup because two
+force-incremented aggregates in one operation cover for each other:
+
+- the **position** race runs two *different lots* into *one position*, so no two
+  lot versions can collide and only the position can be serializing;
+- the **lot** race runs *one lot* into *two different positions*, so no two
+  position versions can collide and only the lot can be.
+
+Both were verified to fail when their own lock mode is removed, and to fail
+*only* there. That property is the whole value of the test: the original
+warehouse-cascade bug survived precisely because nothing checked it.

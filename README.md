@@ -71,6 +71,7 @@ erDiagram
 
 - The sum allocated to a position never exceeds `capacity_kg` — which also means a position cannot be re-rated below what it already holds
 - A transfer requires sufficient balance at the source position
+- A lot is never received beyond its `net_weight_kg`, counted across every inbound it ever had
 - A lot with status `SHIPPED` is immutable (terminal state)
 - Picking suggestion follows FIFO by crop year
 - Shipment blend averages moisture and classification **weighted by weight**
