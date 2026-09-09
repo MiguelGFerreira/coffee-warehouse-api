@@ -1,6 +1,7 @@
 package tech.migueldev.coffeewarehouse.service;
 
 import tech.migueldev.coffeewarehouse.api.dto.OutboundRequest;
+import tech.migueldev.coffeewarehouse.api.dto.PickingSuggestionResponse;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentItemRequest;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentItemWeightRequest;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentRequest;
@@ -14,6 +15,8 @@ import tech.migueldev.coffeewarehouse.domain.ShipmentItem;
 import tech.migueldev.coffeewarehouse.domain.ShipmentStatus;
 import tech.migueldev.coffeewarehouse.domain.StoragePosition;
 import tech.migueldev.coffeewarehouse.repository.ShipmentItemRepository;
+import tech.migueldev.coffeewarehouse.repository.StockAvailabilityRepository;
+import tech.migueldev.coffeewarehouse.repository.StockAvailabilityRepository.AvailableStock;
 import tech.migueldev.coffeewarehouse.repository.ShipmentRepository;
 
 import org.springframework.data.domain.Page;
@@ -22,6 +25,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Composition of a shipment, and the reservation that composing one implies.
@@ -47,17 +52,20 @@ public class ShipmentService {
 
     private final ShipmentRepository shipments;
     private final ShipmentItemRepository items;
+    private final StockAvailabilityRepository availability;
     private final LotService lotService;
     private final StoragePositionService positionService;
     private final StockMovementService movementService;
 
     public ShipmentService(ShipmentRepository shipments,
                            ShipmentItemRepository items,
+                           StockAvailabilityRepository availability,
                            LotService lotService,
                            StoragePositionService positionService,
                            StockMovementService movementService) {
         this.shipments = shipments;
         this.items = items;
+        this.availability = availability;
         this.lotService = lotService;
         this.positionService = positionService;
         this.movementService = movementService;
@@ -250,6 +258,56 @@ public class ShipmentService {
     public BigDecimal availableOfLotAt(Long lotId, Long positionId, Long excludingShipmentId) {
         return movementService.balanceOfLotAt(lotId, positionId)
                 .subtract(items.reservedOfLotAt(lotId, positionId, excludingShipmentId));
+    }
+
+    /**
+     * Walks the free stock oldest crop first, taking from each pair until the
+     * requested weight is covered.
+     *
+     * <h2>Why FIFO by crop year</h2>
+     *
+     * Coffee does not improve in storage. Shipping the oldest crop first is what
+     * keeps a warehouse from quietly accumulating a corner of stock nobody will
+     * take, so the suggestion sorts by crop year before anything else.
+     *
+     * <h2>Why it only suggests</h2>
+     *
+     * Nothing here reserves, moves or writes. A caller turns a line into a claim
+     * by posting it as a shipment item, which re-checks availability at that
+     * moment -- between the two, someone else may have taken the same coffee.
+     * Reserving here instead would mean every browse of the warehouse locked
+     * stock away from everyone else.
+     *
+     * A request larger than the warehouse holds comes back with a shortfall
+     * rather than an error: "here is the 14 tonnes that exist, and where" is a
+     * useful answer to a request for 18.
+     */
+    @Transactional(readOnly = true)
+    public PickingSuggestionResponse suggestPicking(BigDecimal requestedKg, Long producerId,
+                                                    Integer cropYear) {
+        List<PickingSuggestionResponse.PickingLine> lines = new ArrayList<>();
+        BigDecimal remaining = requestedKg;
+
+        for (AvailableStock stock : availability.findAvailableFifo(producerId, cropYear)) {
+            if (remaining.signum() <= 0) {
+                break;
+            }
+            BigDecimal take = remaining.min(stock.getAvailableKg());
+            lines.add(new PickingSuggestionResponse.PickingLine(
+                    stock.getLotId(),
+                    stock.getLotCode(),
+                    stock.getCropYear(),
+                    stock.getMoisturePercent(),
+                    stock.getPositionId(),
+                    stock.getPositionCode(),
+                    take,
+                    stock.getAvailableKg()));
+            remaining = remaining.subtract(take);
+        }
+
+        BigDecimal suggested = requestedKg.subtract(remaining);
+        return new PickingSuggestionResponse(requestedKg, suggested,
+                remaining.max(BigDecimal.ZERO), remaining.signum() <= 0, lines);
     }
 
     private void ensureAvailable(Shipment shipment, Lot lot, StoragePosition position,

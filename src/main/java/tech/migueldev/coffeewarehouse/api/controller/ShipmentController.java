@@ -1,6 +1,7 @@
 package tech.migueldev.coffeewarehouse.api.controller;
 
 import tech.migueldev.coffeewarehouse.api.dto.BlendResponse;
+import tech.migueldev.coffeewarehouse.api.dto.PickingSuggestionResponse;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentItemRequest;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentItemResponse;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentItemWeightRequest;
@@ -12,12 +13,14 @@ import tech.migueldev.coffeewarehouse.domain.ShipmentStatus;
 import tech.migueldev.coffeewarehouse.service.ShipmentService;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.data.web.PagedModel;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.math.BigDecimal;
 import java.net.URI;
 
 /**
@@ -43,6 +47,7 @@ import java.net.URI;
  */
 @RestController
 @RequestMapping("/api/shipments")
+@Validated
 public class ShipmentController {
 
     private final ShipmentService service;
@@ -58,6 +63,22 @@ public class ShipmentController {
         URI location = uriBuilder.path("/api/shipments/{id}")
                 .buildAndExpand(shipment.getId()).toUri();
         return ResponseEntity.created(location).body(ShipmentResponse.from(shipment));
+    }
+
+    /**
+     * What to pick, and from where, to make up a weight -- oldest crop first.
+     *
+     * A GET because it changes nothing: it reserves no stock and writes no row.
+     * Mapped above {@code /{id}} so "picking-suggestion" is never read as a
+     * shipment id.
+     */
+    @GetMapping("/picking-suggestion")
+    public PickingSuggestionResponse suggestPicking(
+            @RequestParam @DecimalMin(value = "0.0", inclusive = false) BigDecimal weightKg,
+            @RequestParam(required = false) Long producerId,
+            @RequestParam(required = false) Integer cropYear) {
+
+        return service.suggestPicking(weightKg, producerId, cropYear);
     }
 
     @GetMapping("/{id}")
