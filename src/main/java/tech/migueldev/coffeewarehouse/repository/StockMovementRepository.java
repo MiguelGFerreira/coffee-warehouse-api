@@ -62,6 +62,24 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
             """)
     BigDecimal balanceOfLot(@Param("lotId") Long lotId);
 
+    /**
+     * Everything ever received for a lot, which is the number its net weight
+     * caps -- deliberately not the current balance.
+     *
+     * A lot that came in at 12,000 kg and shipped out entirely has a balance of
+     * zero, but that coffee is gone: it cannot be received a second time. The
+     * ceiling is on what has cumulatively arrived, so a lot put away in parts
+     * across several positions still adds up to exactly its net weight and no
+     * more.
+     */
+    @Query("""
+            SELECT COALESCE(SUM(m.weightKg), 0)
+            FROM StockMovement m
+            WHERE m.lot.id = :lotId
+              AND m.type = tech.migueldev.coffeewarehouse.domain.MovementType.INBOUND
+            """)
+    BigDecimal totalInboundOf(@Param("lotId") Long lotId);
+
     @Override
     @EntityGraph(attributePaths = {"lot", "sourcePosition", "targetPosition"})
     Optional<StockMovement> findById(Long id);

@@ -43,10 +43,18 @@ public class StockMovementService {
         this.lotService = lotService;
     }
 
+    /**
+     * The one operation with two capacity invariants to satisfy, one per
+     * aggregate: the position cannot hold more than it can hold, and the lot
+     * cannot have more of it received than the producer delivered. Both are
+     * aggregations over the ledger, so both aggregates are loaded with a forced
+     * version increment and each serializes its own rule.
+     */
     @Transactional
     public StockMovement recordInbound(InboundRequest request) {
-        Lot lot = lotService.findById(request.lotId());
+        Lot lot = lotService.findByIdAndLock(request.lotId());
         lot.ensureMovable();
+        lot.ensureInboundFits(movements.totalInboundOf(lot.getId()), request.weightKg());
 
         StoragePosition target = lockPosition(request.targetPositionId());
         target.ensureCanReceive();

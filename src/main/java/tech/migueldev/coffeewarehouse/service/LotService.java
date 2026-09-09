@@ -53,6 +53,16 @@ public class LotService {
                 .orElseThrow(() -> ResourceNotFoundException.of("Lot", id));
     }
 
+    /**
+     * The same lot, loaded so that its version is bumped at commit. Only an
+     * inbound needs it: see the note on the repository method.
+     */
+    @Transactional
+    public Lot findByIdAndLock(Long id) {
+        return repository.findByIdAndLock(id)
+                .orElseThrow(() -> ResourceNotFoundException.of("Lot", id));
+    }
+
     @Transactional(readOnly = true)
     public Page<Lot> search(LotStatus status, Integer cropYear, Long producerId, Pageable pageable) {
         return repository.search(status, cropYear, producerId, pageable);

@@ -13,6 +13,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 import tech.migueldev.coffeewarehouse.api.exception.LotNotMovableException;
+import tech.migueldev.coffeewarehouse.api.exception.LotWeightExceededException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -106,6 +107,29 @@ public class Lot extends AuditableEntity {
         if (status == LotStatus.SHIPPED) {
             throw new LotNotMovableException(
                     "Lot %s is %s and accepts no movement".formatted(code, status));
+        }
+    }
+
+    /**
+     * A lot cannot have more of it put away than the producer delivered.
+     *
+     * The mirror of {@code StoragePosition.ensureFits}: same shape, different
+     * bar. A position is capped by what it can physically hold; a lot is capped
+     * by what physically exists. Both take the aggregation as a parameter rather
+     * than reaching for a repository from inside the entity.
+     *
+     * What is passed in is everything ever received, not the current balance.
+     * A lot that shipped out entirely has a balance of zero, but that coffee is
+     * gone -- it does not become receivable again. Coffee genuinely coming back
+     * would be a business event this model does not have, and letting it in
+     * through a slack ceiling would be the wrong way to acquire one.
+     */
+    public void ensureInboundFits(BigDecimal alreadyReceived, BigDecimal incomingWeightKg) {
+        BigDecimal resulting = alreadyReceived.add(incomingWeightKg);
+        if (resulting.compareTo(netWeightKg) > 0) {
+            throw new LotWeightExceededException(
+                    "Lot %s has %s kg of its %s kg already received; %s kg more would exceed it"
+                            .formatted(code, alreadyReceived, netWeightKg, incomingWeightKg));
         }
     }
 

@@ -70,6 +70,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "lot-not-movable", request);
     }
 
+    @ExceptionHandler(LotWeightExceededException.class)
+    ProblemDetail handleLotWeightExceeded(LotWeightExceededException ex,
+                                          HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Lot net weight exceeded", ex.getMessage(),
+                "lot-weight-exceeded", request);
+    }
+
     @ExceptionHandler(PositionNotAvailableException.class)
     ProblemDetail handlePositionNotAvailable(PositionNotAvailableException ex,
                                               HttpServletRequest request) {
