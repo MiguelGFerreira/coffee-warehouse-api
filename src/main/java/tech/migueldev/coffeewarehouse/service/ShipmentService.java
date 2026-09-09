@@ -1,11 +1,13 @@
 package tech.migueldev.coffeewarehouse.service;
 
+import tech.migueldev.coffeewarehouse.api.dto.OutboundRequest;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentItemRequest;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentItemWeightRequest;
 import tech.migueldev.coffeewarehouse.api.dto.ShipmentRequest;
 import tech.migueldev.coffeewarehouse.api.exception.DuplicateCodeException;
 import tech.migueldev.coffeewarehouse.api.exception.InsufficientAvailabilityException;
 import tech.migueldev.coffeewarehouse.api.exception.ResourceNotFoundException;
+import tech.migueldev.coffeewarehouse.domain.Blend;
 import tech.migueldev.coffeewarehouse.domain.Lot;
 import tech.migueldev.coffeewarehouse.domain.Shipment;
 import tech.migueldev.coffeewarehouse.domain.ShipmentItem;
@@ -142,6 +144,73 @@ public class ShipmentService {
             lot.releaseReservation();
         }
         return shipment;
+    }
+
+    /**
+     * Sends the shipment: every line becomes an outbound, the blend is frozen,
+     * and the lots are told what became of them.
+     *
+     * <h2>Why this goes through the ledger service</h2>
+     *
+     * The shipment gets no private door into {@code stock_movement}. Routing
+     * each line through {@code recordOutbound} means every Phase 3 invariant
+     * still applies -- the position is locked the same way, the balance is
+     * checked the same way, a SHIPPED lot is refused the same way -- and the
+     * concurrency story stays a single story instead of two that have to agree.
+     *
+     * The balance check is not redundant with the availability check at
+     * composition time: stock can have moved between the two, and this is the
+     * moment the weight actually leaves.
+     *
+     * <h2>Order</h2>
+     *
+     * The blend is taken before anything moves, the movements are written next,
+     * and the statuses are set last. Marking a lot SHIPPED any earlier would
+     * make {@code ensureMovable} reject the very outbound that is shipping it.
+     */
+    @Transactional
+    public Shipment confirm(Long shipmentId) {
+        Shipment shipment = findById(shipmentId);
+        shipment.ensureEditable();
+
+        Blend blend = shipment.blend();
+
+        for (ShipmentItem item : shipment.getItems()) {
+            movementService.recordOutbound(new OutboundRequest(
+                    item.getLot().getId(),
+                    item.getSourcePosition().getId(),
+                    item.getWeightKg(),
+                    null,
+                    "Shipment %s".formatted(shipment.getCode())));
+        }
+
+        shipment.confirm(blend);
+        shipment.getItems().stream()
+                .map(ShipmentItem::getLot)
+                .distinct()
+                .forEach(lot -> settleAfterDispatch(lot, shipment));
+
+        return shipment;
+    }
+
+    /**
+     * What a lot becomes once the shipment carrying it has gone out.
+     *
+     * <p><b>SHIPPED only when nothing of it is left.</b> The status is terminal
+     * and refuses every later movement, so marking a partially dispatched lot
+     * would strand the remainder in the warehouse permanently -- no transfer, no
+     * second shipment, no correction. A lot that sent 5,000 of its 12,000 kg is
+     * ordinary stock again.
+     *
+     * A remainder still claimed by another draft shipment stays RESERVED: this
+     * dispatch settled its own claim, not everyone else's.
+     */
+    private void settleAfterDispatch(Lot lot, Shipment shipment) {
+        if (movementService.balanceOfLot(lot.getId()).signum() == 0) {
+            lot.markShipped();
+        } else if (!stillReservedElsewhere(lot, shipment)) {
+            lot.returnToStored();
+        }
     }
 
     @Transactional
