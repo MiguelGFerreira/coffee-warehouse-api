@@ -265,6 +265,70 @@ class StockMovementControllerTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.entries[2].type").value("OUTBOUND"));
     }
 
+    @Test
+    @DisplayName("an inbound beyond the net weight of the lot is refused with 409")
+    void refusesInboundBeyondNetWeight() throws Exception {
+        var request = new InboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("18000.001"), null, null);
+
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:lot-weight-exceeded"));
+
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(jsonPath("$.entries", hasSize(0)));
+    }
+
+    @Test
+    @DisplayName("a lot put away across several positions is accepted up to exactly its net weight")
+    void allowsSplittingALotUpToItsNetWeight() throws Exception {
+        inbound(positionA, "12000.000");
+        inbound(positionB, "6000.000");
+
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(jsonPath("$.storedWeightKg").value(18000.000));
+
+        // The lot is now fully received: not one more gram of it exists.
+        var request = new InboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("0.001"), null, null);
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:lot-weight-exceeded"));
+    }
+
+    /**
+     * The ceiling counts everything ever received, not the current balance.
+     * Shipping a lot out empties it without making it receivable again -- that
+     * coffee left the warehouse and does not exist to arrive a second time.
+     */
+    @Test
+    @DisplayName("a lot shipped out entirely still cannot be received again")
+    void aFullyDispatchedLotCannotBeReceivedAgain() throws Exception {
+        inbound(positionA, "18000.000");
+
+        var outbound = new OutboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("18000.000"), null, null);
+        mockMvc.perform(post("/api/movements/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(outbound)))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(jsonPath("$.storedWeightKg").value(0));
+
+        var request = new InboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("100.000"), null, null);
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:lot-weight-exceeded"));
+    }
+
     /**
      * The other direction of the capacity invariant. Nothing stops an operator
      * from re-rating a position, so the rule has to hold when the bar is

@@ -34,25 +34,43 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The proof that the capacity invariant survives concurrency.
+ * The proof that the two ledger capacity invariants survive concurrency.
  *
- * The race only exists between the moment a transaction reads the occupancy and
- * the moment it commits. Simply firing two threads at the service does not
+ * An inbound has to satisfy one rule per aggregate: the position cannot end up
+ * holding more than its capacity, and the lot cannot end up having more of it
+ * received than the producer delivered. Both are aggregations over a table that
+ * is only ever inserted into, so neither is protected by an ordinary
+ * {@code @Version} -- nothing updates the row whose rule is at stake. Both
+ * aggregates are therefore loaded with {@code OPTIMISTIC_FORCE_INCREMENT}.
+ *
+ * The race only exists between the moment a transaction reads its aggregation
+ * and the moment it commits. Simply firing two threads at the service does not
  * reproduce it: the work is fast enough that the first commits before the
  * second reads, and such a test passes even with no protection at all -- which
- * makes it worse than no test.
+ * makes it worse than no test. So the interleaving is forced. Each thread opens
+ * its own transaction, calls the real service inside it, and then waits on a
+ * barrier before committing. Both have read and appended while neither has
+ * committed, which is exactly the window the invariants have to survive.
+ * Nothing of the production logic is reimplemented here; only the commit
+ * timing is.
  *
- * So the interleaving is forced. Each thread opens its own transaction, calls
- * the real service inside it, and then waits on a barrier before committing.
- * Both have read the occupancy and appended to the ledger while neither has
- * committed, which is exactly the window the invariant has to survive. Nothing
- * of the production logic is reimplemented here; only the commit timing is.
+ * <p><b>Each test isolates exactly one aggregate.</b> That is the property that
+ * makes them worth having, and it takes deliberate setup, because two
+ * force-incremented aggregates in one operation can cover for each other:
  *
- * The lot is deliberately already STORED before the race starts. The first
- * inbound of a lot dirties its row through markStored(), and the version on the
- * lot would then serialize the two transactions all by itself -- hiding whether
- * the position defends its own capacity at all. Warming the lot up first strips
- * that away and leaves the position as the only thing under test.
+ * <ul>
+ *   <li>the position race runs <b>two different lots into one position</b>, so
+ *       the two lot versions cannot collide and only the position can be doing
+ *       the serializing;</li>
+ *   <li>the lot race runs <b>one lot into two different positions</b>, so the
+ *       two position versions cannot collide and only the lot can be.</li>
+ * </ul>
+ *
+ * The lot race additionally warms its lot up to STORED first. The first inbound
+ * of a lot dirties its row through {@code markStored()}, and that alone would
+ * bump the version -- hiding whether the forced increment is doing anything.
+ * Warming it up strips that away and leaves the lock mode as the only thing
+ * under test.
  *
  * This is also why the project uses Testcontainers and not H2: what is being
  * asserted is the behaviour of a real Postgres under two connections.
@@ -60,6 +78,7 @@ import java.util.concurrent.TimeUnit;
 class LedgerConcurrencyTest extends AbstractIntegrationTest {
 
     private static final BigDecimal CAPACITY = new BigDecimal("1000.000");
+    private static final BigDecimal ROOMY = new BigDecimal("50000.000");
 
     @Autowired
     private StockMovementService service;
@@ -82,9 +101,16 @@ class LedgerConcurrencyTest extends AbstractIntegrationTest {
     @Autowired
     private LotRepository lotRepository;
 
+    /** Net weight far above anything these tests move: the ceiling stays out of the way. */
     private Lot lot;
+    private Lot otherLot;
+
+    /** Net weight of 1,000 kg: the ceiling is what the lot race is aiming at. */
+    private Lot cappedLot;
+
     private StoragePosition position;
-    private StoragePosition elsewhere;
+    private StoragePosition roomyA;
+    private StoragePosition roomyB;
 
     @BeforeEach
     void seed() {
@@ -92,25 +118,31 @@ class LedgerConcurrencyTest extends AbstractIntegrationTest {
                 new Producer("COP-001", "Cooperativa Serra Alta", "Guaxupe", "MG"));
         Warehouse warehouse = warehouseRepository.save(
                 new Warehouse("WH1", "Armazem Central", "Guaxupe", "MG"));
+
         position = positionRepository.save(
                 new StoragePosition(warehouse, "01", "01", "01", CAPACITY));
-        elsewhere = positionRepository.save(
-                new StoragePosition(warehouse, "02", "01", "01", new BigDecimal("50000.000")));
+        roomyA = positionRepository.save(
+                new StoragePosition(warehouse, "02", "01", "01", ROOMY));
+        roomyB = positionRepository.save(
+                new StoragePosition(warehouse, "03", "01", "01", ROOMY));
+
         lot = lotRepository.save(new Lot("LOT-001", producer, 2025,
                 new BigDecimal("100000.000"), LocalDate.of(2025, 6, 10)));
-
-        // Take the lot out of AWAITING_ALLOCATION somewhere else, so the race
-        // below cannot be won by the version on the lot instead of the position.
-        service.recordInbound(new InboundRequest(
-                lot.getId(), elsewhere.getId(), new BigDecimal("100.000"), null, "warm-up"));
+        otherLot = lotRepository.save(new Lot("LOT-002", producer, 2025,
+                new BigDecimal("100000.000"), LocalDate.of(2025, 6, 11)));
+        cappedLot = lotRepository.save(new Lot("LOT-003", producer, 2025,
+                new BigDecimal("1000.000"), LocalDate.of(2025, 6, 12)));
     }
 
     @Test
-    @DisplayName("two transactions that both find room before either commits: only one gets in")
+    @DisplayName("two lots that both find room in one position before either commits: only one gets in")
     void overlappingInboundsCannotOverflowThePosition() throws Exception {
         // 2 x 600 against a capacity of 1000: if both committed, the position
-        // would hold 1200 kg of the 1000 it can take.
-        List<Throwable> failures = runOverlappingInbounds("600.000");
+        // would hold 1200 kg of the 1000 it can take. Two different lots, so
+        // nothing but the position itself can refuse the second one.
+        List<Throwable> failures = runOverlapping(
+                new InboundRequest(lot.getId(), position.getId(), new BigDecimal("600.000"), null, null),
+                new InboundRequest(otherLot.getId(), position.getId(), new BigDecimal("600.000"), null, null));
 
         assertThat(failures).hasSize(1);
         assertThat(failures.get(0)).isInstanceOf(OptimisticLockingFailureException.class);
@@ -118,15 +150,45 @@ class LedgerConcurrencyTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("one lot into two positions cannot be received beyond its net weight")
+    void overlappingInboundsCannotExceedTheLotNetWeight() throws Exception {
+        // Take the lot out of AWAITING_ALLOCATION first, so the race below
+        // cannot be won by markStored() dirtying the row instead of by the
+        // forced version increment.
+        service.recordInbound(new InboundRequest(
+                cappedLot.getId(), roomyA.getId(), new BigDecimal("100.000"), null, "warm-up"));
+
+        // 100 already received, then 2 x 600 against a net weight of 1000: each
+        // transaction reads 100 and finds room, but together they would put
+        // 1300 kg of a 1000 kg lot into the warehouse. The two positions are
+        // different and both have room, so only the lot can refuse.
+        List<Throwable> failures = runOverlapping(
+                new InboundRequest(cappedLot.getId(), roomyA.getId(), new BigDecimal("600.000"), null, null),
+                new InboundRequest(cappedLot.getId(), roomyB.getId(), new BigDecimal("600.000"), null, null));
+
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0)).isInstanceOf(OptimisticLockingFailureException.class);
+        assertThat(movements.totalInboundOf(cappedLot.getId())).isEqualByComparingTo("700.000");
+        assertThat(movements.totalInboundOf(cappedLot.getId()))
+                .isLessThanOrEqualTo(cappedLot.getNetWeightKg());
+    }
+
+    @Test
     @DisplayName("the loser of the race leaves nothing behind in the ledger")
     void theRejectedTransactionAppendsNothing() throws Exception {
-        runOverlappingInbounds("600.000");
+        runOverlapping(
+                new InboundRequest(lot.getId(), position.getId(), new BigDecimal("600.000"), null, null),
+                new InboundRequest(otherLot.getId(), position.getId(), new BigDecimal("600.000"), null, null));
 
         // The losing transaction had already inserted its movement before the
         // version bump was refused. Its rollback has to take that row with it,
         // or the ledger would record weight the position never received.
-        assertThat(movements.findAll()).hasSize(2); // the warm-up plus the winner
-        assertThat(movements.balanceOfLot(lot.getId())).isEqualByComparingTo("700.000");
+        // count() rather than findAll(): when this assertion fails, AssertJ
+        // renders the movements it got, and rendering one touches its lazy lot
+        // outside the session -- turning a clear "expected 1 but was 2" into a
+        // LazyInitializationException that explains nothing.
+        assertThat(movements.count()).isEqualTo(1);
+        assertThat(movements.occupancyOf(position.getId())).isEqualByComparingTo("600.000");
     }
 
     @Test
@@ -141,34 +203,19 @@ class LedgerConcurrencyTest extends AbstractIntegrationTest {
     }
 
     /**
-     * Runs two inbounds of the same weight in two transactions held open until
-     * both have read and appended, then lets them commit. Returns the failures.
+     * Runs two inbounds in two transactions held open until both have read and
+     * appended, then lets them commit. Returns the failures.
      */
-    private List<Throwable> runOverlappingInbounds(String weight) throws Exception {
+    private List<Throwable> runOverlapping(InboundRequest first, InboundRequest second) throws Exception {
         CyclicBarrier bothHaveRead = new CyclicBarrier(2);
         ExecutorService pool = Executors.newFixedThreadPool(2);
         List<Throwable> failures = new ArrayList<>();
 
         try {
-            Callable<Throwable> attempt = () -> {
-                TransactionTemplate transaction = new TransactionTemplate(transactionManager);
-                try {
-                    transaction.execute(status -> {
-                        service.recordInbound(new InboundRequest(
-                                lot.getId(), position.getId(), new BigDecimal(weight), null, null));
-                        waitForPeer(bothHaveRead);
-                        return null;
-                    });
-                    return null;
-                } catch (RuntimeException failed) {
-                    // Release the peer if it is still waiting, so a failure here
-                    // never turns into a hung test.
-                    bothHaveRead.reset();
-                    return failed;
-                }
-            };
+            List<Future<Throwable>> results = List.of(
+                    pool.submit(attempt(first, bothHaveRead)),
+                    pool.submit(attempt(second, bothHaveRead)));
 
-            List<Future<Throwable>> results = List.of(pool.submit(attempt), pool.submit(attempt));
             for (Future<Throwable> result : results) {
                 Throwable failure = result.get(30, TimeUnit.SECONDS);
                 if (failure != null) {
@@ -179,6 +226,25 @@ class LedgerConcurrencyTest extends AbstractIntegrationTest {
             pool.shutdownNow();
         }
         return failures;
+    }
+
+    private Callable<Throwable> attempt(InboundRequest request, CyclicBarrier bothHaveRead) {
+        return () -> {
+            TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+            try {
+                transaction.execute(status -> {
+                    service.recordInbound(request);
+                    waitForPeer(bothHaveRead);
+                    return null;
+                });
+                return null;
+            } catch (RuntimeException failed) {
+                // Release the peer if it is still waiting, so a failure here
+                // never turns into a hung test.
+                bothHaveRead.reset();
+                return failed;
+            }
+        };
     }
 
     private void waitForPeer(CyclicBarrier barrier) {
