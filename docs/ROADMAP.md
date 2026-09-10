@@ -69,7 +69,7 @@ The heart of the project. This is the phase that separates this repo from a CRUD
 
 ---
 
-## Phase 4 — Shipment and blend
+## Phase 4 — Shipment and blend ✅
 
 **Deliverables**
 - Migration `V3__shipment.sql`: shipment + items

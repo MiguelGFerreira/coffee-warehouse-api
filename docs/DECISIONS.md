@@ -220,3 +220,102 @@ force-incremented aggregates in one operation cover for each other:
 Both were verified to fail when their own lock mode is removed, and to fail
 *only* there. That property is the whole value of the test: the original
 warehouse-cascade bug survived precisely because nothing checked it.
+
+
+---
+
+## D5 — Reservation is an aggregation, and SHIPPED means empty
+
+**Date:** 2026-09-09 · **Status:** accepted
+
+Three decisions from Phase 4 that a reader is likely to push on.
+
+### Reserved weight is never a column
+
+`RESERVED` was a dead value in `LotStatus` until this phase. The tempting way to
+give it meaning is a `reserved_kg` on the lot, and it is wrong for the same
+reason `current_occupancy` is: putting a lot on a draft shipment moves nothing,
+so its ledger balance is untouched, and two shipments checking the balance alone
+would each see the full 10,000 kg and each claim it.
+
+What is committed is summed from the items of DRAFT shipments, so:
+
+```
+available = balance at the position − weight claimed by other draft shipments
+```
+
+Both halves are aggregations. The second one excludes the shipment being edited,
+because a line's *new total* is what has to fit — counting the shipment's own
+current claim would charge it twice for weight it is about to replace.
+
+Only DRAFT counts. A confirmed shipment has already taken its weight out through
+the ledger, so charging it again would hide stock that is genuinely gone; a
+cancelled one never took anything.
+
+**The status is still a label, and it is recomputed rather than toggled.** It
+answers "is any of this lot spoken for?", never "how much". A lot on two drafts,
+released by one, is still held by the other — so every transition asks the
+aggregation instead of flipping a bit. Cancelling releases before it changes
+status, since items stop counting as reservations the moment a shipment leaves
+DRAFT.
+
+Composition takes the same lock an inbound does (D4): availability is summed
+from rows that are only ever inserted, and `markReserved()` dirties the lot only
+on the first claim.
+
+### A partially dispatched lot must not be SHIPPED
+
+The roadmap says "lots transition to `SHIPPED` when the shipment is confirmed",
+and taken literally that is a bug. `SHIPPED` is terminal and `ensureMovable`
+refuses every later movement, so a lot that sent 5,000 of its 12,000 kg would
+have the remaining 7,000 stranded in the warehouse permanently — no transfer, no
+second shipment, no correction.
+
+A lot goes `SHIPPED` only when its remaining balance is zero. Otherwise it is
+ordinary stored stock again, or stays `RESERVED` if another draft still holds
+it: this dispatch settled its own claim, not everyone else's.
+
+`ShipmentControllerTest.partialDispatchDoesNotStrandTheRemainder` fails with
+"expected STORED but was SHIPPED" against the literal implementation, which is
+the only thing that makes it worth having.
+
+### The blend is frozen, the composition is not
+
+A lot's moisture is revisable — `updateClassification` exists for exactly that —
+so a confirmed shipment recomputed from today's lot data would report a blend
+that was never shipped. The weight, the moisture average and its basis are
+copied onto the row at confirmation and never recomputed. That is not the
+cached-balance mistake rule 1 exists to prevent: it is a historical fact frozen
+at a point in time, the same reason a movement records `occurred_at` separately
+from when it was written.
+
+**The categorical composition stays derived, and that asymmetry is deliberate.**
+The moisture average is a figure recorded at dispatch, the kind a contract
+quotes; the screen, defect and cup shares are a descriptive view of how the lots
+are graded, and a re-grade is new information about the same coffee rather than
+a change to what was sent. The honest cost: re-grading a lot after dispatch does
+move the reported composition of a confirmed shipment while its moisture stays
+put. Freezing the composition too would mean a JSONB column or a child table for
+the shares — more schema than the phase needed, and the reason the item weights
+are immutable after confirmation is so that the only thing that can move is the
+label.
+
+### Why classification is composed rather than averaged
+
+There is no average of `HARD` and `SOFT`. Each categorical attribute is reported
+as the share of total weight behind every distinct value, which for screen size
+is not a workaround but the trade standard: a sieve analysis reports the mass
+percentage retained on each screen.
+
+Shares divide by the *total* weight, not the graded weight, so a shortfall below
+100% is visible as coffee nobody graded rather than hidden behind a denominator
+that quietly shrank. Moisture is the opposite — it divides by the weight that
+actually has a reading, because averaging over the total would count an ungraded
+lot as 0% and drag the result down, which is a wrong number rather than an
+incomplete one. `moistureBasisKg` reports the difference.
+
+Two refinements were left out on purpose. The true COB standard for defect type
+averages the **defect count** weighted by weight and maps back to a type, which
+needs a count column the schema does not have. And trade practice treats cup
+quality as limited by the *worst* component rather than by an average, which
+would need `cup_quality` to become a ranked enum.

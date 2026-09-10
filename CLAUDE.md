@@ -84,7 +84,10 @@ Swagger: http://localhost:8080/docs · Health: http://localhost:8080/actuator/he
 - a transfer requires sufficient balance at the source
 - a `SHIPPED` lot accepts no movement
 - picking suggestion follows FIFO by crop year
-- shipment blend: moisture and classification averaged **weighted by weight**
+- shipment blend: moisture averaged **weighted by weight**; classification is categorical,
+  so it is composed by weight rather than averaged
+- a lot on a draft shipment is reserved, and no two shipments can claim the same kilo
+- a lot becomes `SHIPPED` only once its remaining balance is zero
 
 **Concurrency:** two simultaneous movements into the same position could blow past capacity. The `version` column existing is not enough on its own: recording a movement only INSERTs into the ledger, so a plain `@Version` on the position never sees a conflict. Positions are therefore loaded with `OPTIMISTIC_FORCE_INCREMENT`, which bumps the version even though the row does not change and makes the position the serialization point of its own invariant. The loser gets 409, not 500.
 
@@ -98,7 +101,17 @@ Swagger: http://localhost:8080/docs · Health: http://localhost:8080/actuator/he
 
 **Phase 3 done:** append-only `stock_movement` ledger, inbound/transfer/outbound, balances by aggregation, lot statement and position occupancy, and the concurrency proof. `StockMovement` is the one entity that does **not** extend `AuditableEntity`: an append-only row has no `updated_at` and no `version` to carry.
 
-**Next: Phase 4 — shipment and blend.** See `docs/ROADMAP.md`.
+**Phase 4 done:** shipment and shipment item, composition with reservation, blend
+(moisture weighted by weight; categorical classification composed by weight, never
+averaged), FIFO picking suggestion, and confirmation writing outbound movements
+through `StockMovementService` rather than touching the ledger directly.
+
+Reserved weight is an aggregation over the items of DRAFT shipments, never a
+column — the same decision as occupancy, applied a second time. A lot becomes
+`SHIPPED` only once nothing of it remains stored: the status is terminal, so
+marking a partially dispatched lot would strand the remainder.
+
+**Next: Phase 5 — finishing.** See `docs/ROADMAP.md`.
 
 ---
 

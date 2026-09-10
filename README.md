@@ -74,7 +74,9 @@ erDiagram
 - A lot is never received beyond its `net_weight_kg`, counted across every inbound it ever had
 - A lot with status `SHIPPED` is immutable (terminal state)
 - Picking suggestion follows FIFO by crop year
-- Shipment blend averages moisture and classification **weighted by weight**
+- Shipment blend averages moisture **weighted by weight**; the categorical classification is composed by weight, never averaged
+- Weight on a draft shipment is reserved, and no two shipments can claim the same kilo
+- A lot becomes `SHIPPED` only once nothing of it remains stored
 
 ### Lot lifecycle
 
@@ -157,7 +159,7 @@ Optimistic rather than pessimistic because contention on a single position is ra
 - [x] **Phase 1** — Foundation: Docker Compose, Flyway, Actuator, CI, integration test
 - [x] **Phase 2** — Registry: Producer, Warehouse, StoragePosition, Lot (CRUD, validation, standardized error handling, pagination)
 - [x] **Phase 3** — Movement ledger: inbound, transfer, outbound, balance calculation, invariants
-- [ ] **Phase 4** — Shipment and blend: composition, weighted average, FIFO suggestion
+- [x] **Phase 4** — Shipment and blend: composition, weighted average, FIFO suggestion
 - [ ] **Phase 5** — Finishing: described OpenAPI, data seed, JWT authentication
 
 ---
