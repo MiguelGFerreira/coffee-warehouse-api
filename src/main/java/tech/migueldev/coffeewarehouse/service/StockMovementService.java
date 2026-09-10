@@ -5,6 +5,7 @@ import tech.migueldev.coffeewarehouse.api.dto.OutboundRequest;
 import tech.migueldev.coffeewarehouse.api.dto.TransferRequest;
 import tech.migueldev.coffeewarehouse.api.exception.InsufficientBalanceException;
 import tech.migueldev.coffeewarehouse.api.exception.InvalidMovementException;
+import tech.migueldev.coffeewarehouse.api.exception.OutOfOrderMovementException;
 import tech.migueldev.coffeewarehouse.api.exception.ResourceNotFoundException;
 import tech.migueldev.coffeewarehouse.domain.Lot;
 import tech.migueldev.coffeewarehouse.domain.StockMovement;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Objects;
 
@@ -58,6 +60,7 @@ public class StockMovementService {
 
         StoragePosition target = lockPosition(request.targetPositionId());
         target.ensureCanReceive();
+        ensureInOrder(lot, target, request.occurredAt());
         target.ensureFits(movements.occupancyOf(target.getId()), request.weightKg());
 
         StockMovement movement = movements.save(StockMovement.inbound(
@@ -81,6 +84,8 @@ public class StockMovementService {
         StoragePosition source = pick(locked, request.sourcePositionId());
         StoragePosition target = pick(locked, request.targetPositionId());
 
+        ensureInOrder(lot, source, request.occurredAt());
+        ensureInOrder(lot, target, request.occurredAt());
         ensureBalance(lot, source, request.weightKg());
         target.ensureCanReceive();
         target.ensureFits(movements.occupancyOf(target.getId()), request.weightKg());
@@ -103,6 +108,7 @@ public class StockMovementService {
         lot.ensureMovable();
 
         StoragePosition source = lockPosition(request.sourcePositionId());
+        ensureInOrder(lot, source, request.occurredAt());
         ensureBalance(lot, source, request.weightKg());
 
         return movements.save(StockMovement.outbound(
@@ -137,6 +143,49 @@ public class StockMovementService {
     @Transactional(readOnly = true)
     public List<StockMovement> statementOf(Long lotId) {
         return movements.findByLotIdOrderByOccurredAtAscIdAsc(lotId);
+    }
+
+    /**
+     * A movement may be backdated, but not behind something already recorded for
+     * the same lot at the same position.
+     *
+     * <h2>Why the rule exists</h2>
+     *
+     * Every check in this service reads an aggregation over the whole ledger:
+     * the balance at a position, the occupancy of it, the total received for a
+     * lot. All of those answer "how much is there <em>now</em>". Validating a
+     * movement against them is only sound if now is also the moment the movement
+     * claims to have happened.
+     *
+     * Without the rule, an outbound dated behind the inbound that supplied it
+     * passes -- today's balance covers it -- and the lot statement, which is
+     * ordered by {@code occurred_at}, then shows a running total that dips below
+     * zero and recovers. The stock was never actually negative; the ledger just
+     * says it was.
+     *
+     * <h2>What it costs</h2>
+     *
+     * A movement genuinely recorded out of order -- Monday's inbound remembered
+     * on Wednesday, after Tuesday's transfer -- is refused rather than silently
+     * accepted. Accepting it correctly would mean revalidating every later
+     * movement of that stock against the balance <em>and</em> the capacity it
+     * would now see, which is a temporal ledger and a much larger thing than
+     * this project needs. Refusing it and saying so is the honest trade.
+     *
+     * Null means now, which is never behind anything, so the ordinary path never
+     * runs this check.
+     */
+    private void ensureInOrder(Lot lot, StoragePosition position, OffsetDateTime occurredAt) {
+        if (occurredAt == null) {
+            return;
+        }
+        OffsetDateTime last = movements.lastMovementOfLotAt(lot.getId(), position.getId());
+        if (last != null && occurredAt.isBefore(last)) {
+            throw new OutOfOrderMovementException(
+                    ("Lot %s last moved at position %s on %s; a movement cannot be recorded "
+                            + "as having happened earlier, at %s")
+                            .formatted(lot.getCode(), position.getCode(), last, occurredAt));
+        }
     }
 
     private void ensureBalance(Lot lot, StoragePosition source, BigDecimal weightKg) {

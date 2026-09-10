@@ -104,6 +104,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "empty-shipment", request);
     }
 
+    @ExceptionHandler(OutOfOrderMovementException.class)
+    ProblemDetail handleOutOfOrderMovement(OutOfOrderMovementException ex,
+                                           HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Movement out of order", ex.getMessage(),
+                "out-of-order-movement", request);
+    }
+
     @ExceptionHandler(InvalidMovementException.class)
     ProblemDetail handleInvalidMovement(InvalidMovementException ex, HttpServletRequest request) {
         return problem(HttpStatus.BAD_REQUEST, "Invalid movement", ex.getMessage(),

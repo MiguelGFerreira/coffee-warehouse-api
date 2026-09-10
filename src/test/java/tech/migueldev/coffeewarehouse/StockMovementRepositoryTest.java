@@ -239,6 +239,44 @@ class StockMovementRepositoryTest {
     }
 
     /**
+     * The rule the whole project rests on, enforced where it cannot be argued
+     * with.
+     *
+     * Until V4 "never UPDATE, never DELETE" bound the application and nothing
+     * else: mapped columns, absent setters, a repository that does not expose
+     * delete. A psql session or a fix typed by hand could still rewrite history.
+     * These two go around every Java guard and straight at the table.
+     */
+    @Test
+    @DisplayName("the database refuses to update a movement that is already recorded")
+    void refusesToUpdateALedgerRow() {
+        StockMovement movement = repository.saveAndFlush(StockMovement.inbound(
+                lot, positionA, new BigDecimal("1000.000"), null, null));
+
+        assertThatThrownBy(() -> {
+            entityManager.createNativeQuery(
+                            "UPDATE stock_movement SET weight_kg = 9999 WHERE id = :id")
+                    .setParameter("id", movement.getId())
+                    .executeUpdate();
+            entityManager.flush();
+        }).hasMessageContaining("append-only");
+    }
+
+    @Test
+    @DisplayName("the database refuses to delete a movement that is already recorded")
+    void refusesToDeleteALedgerRow() {
+        StockMovement movement = repository.saveAndFlush(StockMovement.inbound(
+                lot, positionA, new BigDecimal("1000.000"), null, null));
+
+        assertThatThrownBy(() -> {
+            entityManager.createNativeQuery("DELETE FROM stock_movement WHERE id = :id")
+                    .setParameter("id", movement.getId())
+                    .executeUpdate();
+            entityManager.flush();
+        }).hasMessageContaining("append-only");
+    }
+
+    /**
      * The position ids are CAST explicitly because half of these cases pass one
      * of them as null, and Postgres cannot infer the type of a bare null
      * parameter -- it would fail on the wrong thing and prove nothing.

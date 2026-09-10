@@ -36,6 +36,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 
 @AutoConfigureMockMvc
 class StockMovementControllerTest extends AbstractIntegrationTest {
@@ -407,6 +408,84 @@ class StockMovementControllerTest extends AbstractIntegrationTest {
         // The ledger is untouched: the only entry is the one from before.
         mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
                 .andExpect(jsonPath("$.entries", hasSize(1)))
+                .andExpect(jsonPath("$.storedWeightKg").value(12000.000));
+    }
+
+    /**
+     * The reason backdating is bounded. Every balance check in the service reads
+     * "how much is there now", which is only the right question if now is also
+     * when the movement happened.
+     */
+    @Test
+    @DisplayName("a movement dated behind the last one for the same lot and position is refused")
+    void refusesAMovementRecordedOutOfOrder() throws Exception {
+        inbound(positionA, "12000.000");
+
+        var request = new OutboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("1000.000"),
+                OffsetDateTime.now().minusDays(7), null);
+
+        mockMvc.perform(post("/api/movements/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:out-of-order-movement"));
+
+        // Had it been accepted, the statement would read: 1,000 kg out, then
+        // 12,000 kg in -- a running balance that dips to minus 1,000 and
+        // recovers, describing stock that was never actually negative.
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(jsonPath("$.entries", hasSize(1)))
+                .andExpect(jsonPath("$.entries[0].type").value("INBOUND"));
+    }
+
+    @Test
+    @DisplayName("backdating is allowed as long as it stays behind nothing already recorded")
+    void allowsBackdatingThatDoesNotReorderHistory() throws Exception {
+        OffsetDateTime received = OffsetDateTime.now().minusDays(10);
+        var arrival = new InboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("12000.000"), received, "backdated receiving");
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(arrival)))
+                .andExpect(status().isCreated());
+
+        // Three days after the arrival, and still in the past: nothing is
+        // reordered, so the ledger takes it.
+        var dispatch = new OutboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("2000.000"), received.plusDays(3), null);
+        mockMvc.perform(post("/api/movements/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dispatch)))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
+                .andExpect(jsonPath("$.entries", hasSize(2)))
+                .andExpect(jsonPath("$.storedWeightKg").value(10000.000));
+    }
+
+    @Test
+    @DisplayName("the ordering rule is per position, not across the whole lot")
+    void ordersIndependentlyAtEachPosition() throws Exception {
+        OffsetDateTime now = OffsetDateTime.now();
+
+        var intoA = new InboundRequest(lot.getId(), positionA.getId(),
+                new BigDecimal("6000.000"), now.minusDays(1), null);
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(intoA)))
+                .andExpect(status().isCreated());
+
+        // Earlier than the movement into A, but position B has no history of
+        // this lot at all, so there is nothing here to reorder.
+        var intoB = new InboundRequest(lot.getId(), positionB.getId(),
+                new BigDecimal("6000.000"), now.minusDays(5), null);
+        mockMvc.perform(post("/api/movements/inbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(intoB)))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/lots/{id}/statement", lot.getId()))
                 .andExpect(jsonPath("$.storedWeightKg").value(12000.000));
     }
 
