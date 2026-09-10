@@ -13,7 +13,7 @@ Most Spring Boot portfolio projects are a CRUD with no business rules. This one 
 
 **Balance is not a column — it is an aggregation over history.**
 
-There is no `storage_position.current_occupancy` and no `lot.available_weight`. All position occupancy and all lot balances are derived from the `stock_movement` table, which is **append-only**: it never takes an `UPDATE` or a `DELETE`.
+There is no `storage_position.current_occupancy` and no `lot.available_weight`. All position occupancy and all lot balances are derived from the `stock_movement` table, which is **append-only**: it never takes an `UPDATE` or a `DELETE`, and since `V4` the database enforces that with a trigger rather than trusting the application to behave.
 
 | | Mutable state | Append-only ledger (chosen) |
 |---|---|---|
@@ -77,6 +77,7 @@ erDiagram
 - Shipment blend averages moisture **weighted by weight**; the categorical classification is composed by weight, never averaged
 - Weight on a draft shipment is reserved, and no two shipments can claim the same kilo
 - A lot becomes `SHIPPED` only once nothing of it remains stored
+- A movement may be backdated, but never behind one already recorded for the same lot at the same position
 
 ### Lot lifecycle
 

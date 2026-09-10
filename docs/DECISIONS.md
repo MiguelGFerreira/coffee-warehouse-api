@@ -319,3 +319,68 @@ averages the **defect count** weighted by weight and maps back to a type, which
 needs a count column the schema does not have. And trade practice treats cup
 quality as limited by the *worst* component rather than by an average, which
 would need `cup_quality` to become a ranked enum.
+
+
+---
+
+## D6 — The ledger is append-only in time, and the database says so
+
+**Date:** 2026-09-09 · **Status:** accepted
+
+Two holes closed before Phase 5. Both were the same shape: a rule the project
+states confidently and did not actually enforce.
+
+### The database now refuses UPDATE and DELETE
+
+Rule 1 has said "never `UPDATE`, never `DELETE`" since `V2`, and until `V4` that
+was convention: every column mapped `updatable = false`, no setters on
+`StockMovement`, no delete reached for in the service. All of it binds the
+application and nothing else. A `psql` session, a later migration, a second
+service, or a fix typed by hand at two in the morning could still rewrite
+history — and the audit trail would have no way to show it had happened.
+
+A `BEFORE UPDATE OR DELETE` trigger now refuses both. It raises in SQLSTATE
+class 23 so the driver reports an integrity violation and the API answers `409`
+like any other constraint, rather than leaking a `500`.
+
+`StockMovementRepository` also dropped from `JpaRepository` to `Repository` and
+declares only what the ledger actually offers. Inheriting `delete`, `deleteAll`
+and `deleteById` onto an append-only table and trusting nobody to reach for them
+is not a design. The database is the guarantee; the narrowed interface is the
+same rule stated where it costs a compile error instead of a runtime exception.
+
+**TRUNCATE is deliberately still allowed.** It fires only statement-level
+triggers, so the row-level one never sees it. Blocking it would buy protection
+against an actor who already owns the schema — while breaking the test harness,
+which resets between cases with it. It is a whole-table wipe, not a rewrite of a
+row's history, and the threat this trigger exists for is the ordinary `UPDATE`
+that looks reasonable in the moment.
+
+### Backdating is bounded by what is already recorded
+
+Every check in `StockMovementService` reads an aggregation over the whole
+ledger: the balance at a position, its occupancy, the total received for a lot.
+All of them answer *how much is there now*. Validating a movement against them
+is only sound if **now** is also the moment the movement claims to have
+happened.
+
+It was not. `occurred_at` accepted any past instant, so an outbound dated behind
+the inbound that supplied it passed — today's balance covered it — and the lot
+statement, ordered by `occurred_at`, then showed a running total that dipped
+below zero and recovered. The stock was never negative. The ledger just said it
+was.
+
+A movement may still be backdated, but not behind one already recorded for the
+same lot at the same position. The rule is **per position**: putting a lot into
+a position it has no history at is never reordering anything, and is unaffected.
+Because the ledger is now ordered in time as well as in sequence, the current
+sum *is* the sum as of the newest entry, which makes every existing check
+correct by construction rather than by a second, parallel temporal query.
+
+**What it costs, stated plainly.** A movement genuinely remembered out of order
+— Monday's inbound entered on Wednesday, after Tuesday's transfer — is refused.
+Accepting it correctly would mean revalidating every later movement of that
+stock against both the balance and the capacity it would now see, which is a
+temporal ledger: a much larger thing than this project needs, and one that would
+have to answer what happens when a backdated entry invalidates a movement that
+has already shipped. Refusing it and saying why is the honest trade.
