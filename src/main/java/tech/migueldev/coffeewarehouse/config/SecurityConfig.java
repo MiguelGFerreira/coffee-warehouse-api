@@ -17,6 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
@@ -150,11 +151,22 @@ public class SecurityConfig {
         return new NimbusJwtEncoder(new ImmutableSecret<>(jwtSigningKey));
     }
 
+    /**
+     * A valid signature is not the same as a token this API should accept.
+     *
+     * {@code NimbusJwtDecoder} validates only the timestamps by default, so a
+     * token signed with the same secret by anything else -- another service
+     * sharing the key, a staging environment pointed at the same config -- would
+     * be honoured here. Adding the issuer validator is what makes the
+     * {@code iss} claim mean something instead of being decoration.
+     */
     @Bean
-    JwtDecoder jwtDecoder(SecretKey jwtSigningKey) {
-        return NimbusJwtDecoder.withSecretKey(jwtSigningKey)
+    JwtDecoder jwtDecoder(SecretKey jwtSigningKey, JwtProperties properties) {
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(jwtSigningKey)
                 .macAlgorithm(MacAlgorithm.HS256)
                 .build();
+        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(properties.issuer()));
+        return decoder;
     }
 
     /**

@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -131,6 +132,29 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(HttpStatus.CONFLICT, "Concurrent modification",
                 "The resource was modified by another request; retry the operation",
                 "concurrent-modification", request);
+    }
+
+    /**
+     * A login that did not work.
+     *
+     * <p><b>One answer for every cause.</b> A wrong password, an unknown
+     * username and a deactivated account all come back as the same 401 with the
+     * same message. Spring Security already refuses to distinguish the first two
+     * -- {@code DaoAuthenticationProvider} hides {@code UsernameNotFoundException}
+     * behind {@code BadCredentialsException} -- and the third is folded in here
+     * for the same reason: it is raised before the password is even compared, so
+     * reporting it would tell an attacker that the account exists.
+     *
+     * <p>This handler only ever sees a failure from the login endpoint. An
+     * invalid or missing token fails in the filter chain instead, long before
+     * the DispatcherServlet, and is answered by the entry point configured in
+     * SecurityConfig.
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    ProblemDetail handleAuthenticationFailure(AuthenticationException ex,
+                                              HttpServletRequest request) {
+        return problem(HttpStatus.UNAUTHORIZED, "Authentication failed",
+                "Invalid username or password", "authentication-failed", request);
     }
 
     /**
