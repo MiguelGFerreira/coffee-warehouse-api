@@ -2,6 +2,9 @@ package tech.migueldev.coffeewarehouse.config;
 
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 
+import tech.migueldev.coffeewarehouse.api.exception.ProblemAccessDeniedHandler;
+import tech.migueldev.coffeewarehouse.api.exception.ProblemAuthenticationEntryPoint;
+
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -79,7 +82,9 @@ public class SecurityConfig {
     };
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder)
+    SecurityFilterChain securityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
+                                            ProblemAuthenticationEntryPoint entryPoint,
+                                            ProblemAccessDeniedHandler accessDeniedHandler)
             throws Exception {
 
         http
@@ -99,9 +104,23 @@ public class SecurityConfig {
                         // actuator path -- is closed rather than open. A policy
                         // whose default is permitAll leaks by omission.
                         .anyRequest().authenticated())
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt
-                        .decoder(jwtDecoder)
-                        .jwtAuthenticationConverter(jwtAuthenticationConverter())))
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt
+                                .decoder(jwtDecoder)
+                                .jwtAuthenticationConverter(jwtAuthenticationConverter()))
+                        // Set on the resource server as well as on
+                        // exceptionHandling below: a rejected *token* is
+                        // answered by the bearer-token filter's own entry point,
+                        // which would otherwise still write Spring Security's
+                        // default empty body and leave two different shapes for
+                        // what a client sees as the same 401.
+                        .authenticationEntryPoint(entryPoint)
+                        .accessDeniedHandler(accessDeniedHandler))
+                // And here for the request that carried no token at all, which
+                // never reaches the bearer filter.
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint(entryPoint)
+                        .accessDeniedHandler(accessDeniedHandler))
                 .httpBasic(basic -> basic.disable())
                 .formLogin(form -> form.disable());
 
