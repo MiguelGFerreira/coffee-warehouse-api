@@ -300,10 +300,16 @@ docs: final readme and decision log
 docs: close phase 5
 ```
 
-One commit from the plan is missing: `test: the existing suites run as an
-authenticated user`. Its `@WithMockUser` annotations had to travel with the
-filter chain itself, because separating them would have put a commit on `main`
-where 124 tests fail. A green history was worth more than the tidier split.
+Two entries from the plan did not survive contact with it.
+
+`test: the existing suites run as an authenticated user` had to travel with the
+filter chain itself: its `@WithMockUser` annotations are what keep the suite
+green, so separating them would have put a commit on `main` where 124 tests
+fail. A green history was worth more than the tidier split.
+
+And `docs: close phase 5` nearly became an empty commit, because the commit
+before it had already marked the phase done here. Rather than leave a marker
+with no content, the closing note is this section.
 
 **Done when:** a clean clone runs `docker compose up --build`, logs in at
 `/docs` with a seeded user, and every endpoint answers — with `./mvnw verify`
