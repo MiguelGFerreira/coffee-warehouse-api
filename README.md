@@ -5,6 +5,10 @@ REST API for **traceability and movement of stored coffee lots**, modeled on rea
 
 > Study/portfolio project. The domain is modeled from **public industry knowledge** (COB classification by screen size / defect type / cup quality, generic warehouse addressing). It does not reproduce the business rules, layout or data structures of any company.
 
+![Swagger UI showing the Lots and Stock movements endpoint groups, each operation with a summary and a padlock marking it as protected](docs/images/swagger.png)
+
+*37 endpoints across seven groups, every one described. `docker compose up --build` and it is at [/docs](http://localhost:8080/docs).*
+
 ---
 
 ## Why this project exists
@@ -78,6 +82,10 @@ erDiagram
 - Weight on a draft shipment is reserved, and no two shipments can claim the same kilo
 - A lot becomes `SHIPPED` only once nothing of it remains stored
 - A movement may be backdated, but never behind one already recorded for the same lot at the same position
+
+**These rules are documented where they are enforced**, not only here. Each endpoint's OpenAPI description says what it refuses and why, and lists the problem types it can return:
+
+![The confirm-shipment endpoint in Swagger UI, its description explaining that a partially dispatched lot does not become SHIPPED because the status is terminal and would strand the remainder](docs/images/swagger-confirm.png)
 
 ### Lot lifecycle
 
