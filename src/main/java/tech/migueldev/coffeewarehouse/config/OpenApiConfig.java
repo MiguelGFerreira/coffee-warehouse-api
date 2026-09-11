@@ -38,6 +38,11 @@ public class OpenApiConfig {
 
     private static final String PROBLEM_MEDIA_TYPE = "application/problem+json";
 
+    private static final String JSON_MEDIA_TYPE = "application/json";
+
+    /** What springdoc falls back to when a handler declares no {@code produces}. */
+    private static final String ANY_MEDIA_TYPE = "*/*";
+
     /**
      * The overview, and the catalogue of problem types.
      *
@@ -106,17 +111,48 @@ public class OpenApiConfig {
                                             "Authenticated, but the role does not permit this "
                                                     + "operation"));
                         }
-                        // Overwritten rather than filled in only when absent:
-                        // springdoc infers a */* body from the handler's return
-                        // type, which for an error is the wrong type at the
-                        // wrong media type. Every failure here is problem+json.
+                        // springdoc types every body as */*, because no handler
+                        // declares `produces` -- it has no reason to, since
+                        // Jackson is the only converter in play. That leaves the
+                        // document vaguer than the API: an error is always
+                        // problem+json and a success is always JSON.
+                        //
+                        // Corrected here rather than by adding `produces` to
+                        // seven controllers, because this is a documentation
+                        // defect and not a behavioural one. Declaring `produces`
+                        // would also make content negotiation stricter at
+                        // runtime, which is a real change smuggled in under a
+                        // docs fix.
                         operation.getResponses().forEach((status, response) -> {
                             if (isError(status)) {
                                 response.setContent(problemContent());
+                            } else {
+                                retypeAsJson(response);
                             }
                         });
                     }));
         };
+    }
+
+    /**
+     * Re-keys a success body from the wildcard media type ({@value #ANY_MEDIA_TYPE})
+     * to {@value #JSON_MEDIA_TYPE}, keeping the schema springdoc worked out. A
+     * response that already names a media type, or carries no body at all, is
+     * left alone.
+     *
+     * <p>The constants are referenced rather than written out because the
+     * wildcard's second character pair closes a block comment, which is a
+     * genuinely confusing way for a file to stop compiling.
+     */
+    private static void retypeAsJson(ApiResponse response) {
+        Content content = response.getContent();
+        if (content == null) {
+            return;
+        }
+        MediaType any = content.remove(ANY_MEDIA_TYPE);
+        if (any != null) {
+            content.addMediaType(JSON_MEDIA_TYPE, any);
+        }
     }
 
     private static boolean isError(String status) {
