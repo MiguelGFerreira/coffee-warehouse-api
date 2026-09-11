@@ -384,3 +384,108 @@ stock against both the balance and the capacity it would now see, which is a
 temporal ledger: a much larger thing than this project needs, and one that would
 have to answer what happens when a backdated entry invalidates a movement that
 has already shipped. Refusing it and saying why is the honest trade.
+
+
+---
+
+## D7 — Security is a filter chain, and the errors it writes are still ours
+
+**Date:** 2026-09-11 · **Status:** accepted
+
+Phase 5 put Spring Security in front of an API that had 124 tests reaching
+MockMvc with no authentication at all. Four decisions came out of that, and one
+of them is the reason the phase was not simply "add a login".
+
+### Authorization lives in the chain, not on the services
+
+`@PreAuthorize` on `StockMovementService` is the obvious move and it is the
+wrong one twice over.
+
+It scatters the access policy across the layer that holds business invariants,
+so "who may do this" and "what must remain true" end up interleaved in the same
+methods. And it breaks `LedgerConcurrencyTest`, which drives that service
+straight from an `ExecutorService`: the `SecurityContext` does not propagate to
+worker threads, so every racing call would fail on authentication rather than on
+the thing the test exists to prove. That test is the best evidence in the
+repository that the capacity invariant survives a collision. It should not have
+to know that authentication exists.
+
+Request matchers in one `SecurityFilterChain` keep the whole policy readable as
+a single table, which is the property that makes it reviewable — and reading is
+separated from writing by putting `GET /api/**` above the role rules, since the
+first matching rule wins.
+
+**The limit, stated rather than discovered later.** A rule that depended on the
+*contents* of a request rather than its path would not fit this table and would
+have to move to method security. None currently does.
+
+### The tests split by what they are asking
+
+The tempting way to keep 124 tests green is a test configuration that permits
+everything. It would work, and it would make the suite lie: it would keep
+asserting business rules while silently asserting nothing about security.
+
+What was done instead splits by question. The six controller suites got a
+class-level `@WithMockUser(roles = "ADMIN")` and go on proving capacity, blends
+and lifecycle exactly as before. A new `SecurityTest` asks whether the policy
+itself is right, and deliberately does **not** use `@WithMockUser` — that
+annotation places an authentication straight into the context, skipping the
+bearer filter, the decoder, the issuer validator and the claim-to-authority
+conversion, which is most of what that suite exists to check. It logs in over
+HTTP and sends the token it gets back.
+
+### A 401 never reaches the exception handler
+
+This is the trap, and it is the same shape as the `ConstraintViolationException`
+hole closed just before the phase began: a path that bypasses the handler
+everything else goes through.
+
+Authentication and authorization fail inside the filter chain, before the
+`DispatcherServlet` has picked a handler, so `@RestControllerAdvice` is not in
+the picture and Spring Security writes its own empty body. Every other error in
+this API has been `application/problem+json` since Phase 2 — and these two are
+the ones a client will hit most often.
+
+A custom `AuthenticationEntryPoint` and `AccessDeniedHandler` restore the shape.
+Both are registered **twice**, which is not redundancy: the resource server
+answers a rejected *token* through the bearer filter's own entry point, while
+`exceptionHandling` answers a request that carried no token at all and never
+reaches that filter. Setting only one leaves two different bodies for what a
+client experiences as the same 401.
+
+The 401 keeps `WWW-Authenticate: Bearer`, because RFC 6750 requires it and a
+tidier body is not worth a standard. Its detail says nothing about *why* the
+token was unacceptable; "expired" versus "bad signature" is as useful to someone
+probing with forged tokens as to a developer, and it is in the logs. The 403
+does name the role that would have sufficed, because the whole API surface is
+published at `/docs` and the caller is holding a token that states its own role.
+
+### What writing the tests found
+
+Two claims turned out to be false when something finally checked them, which is
+the argument for writing the test that can fail rather than the one that passes.
+
+**The issuer was not validated.** `application.yml` carried a comment saying the
+`iss` claim meant a token from another service sharing the secret would be
+refused. `NimbusJwtDecoder` validates only the timestamps by default, so it
+would have been honoured. The decoder now carries an issuer validator and a test
+mints a correctly signed token from a foreign issuer to prove it.
+
+**The OpenAPI error bodies were not problem+json.** The `ProblemDetail` schema
+registered on the `OpenAPI` bean never reached the published document, because
+springdoc builds its own `Components` while scanning and discards it; and a
+customizer that attached the schema only where content was missing never fired,
+because springdoc had already inferred a `*/*` body from each handler's return
+type. Both were found by reading the generated document rather than the code.
+All 130 error responses now reference the schema.
+
+### Deliberately out of scope
+
+- **Refresh tokens.** The right production answer, and it doubles the auth
+  surface to demonstrate the same mechanism. The access token's lifetime is
+  configurable instead, and defaults to a warehouse shift.
+- **`created_by` on the audit columns.** Tempting now that requests carry an
+  identity. It touches every table and every migration for a field nothing
+  reads; it belongs with a real audit query, not before one.
+- **Rate limiting, account lockout, password rotation.** Operational concerns
+  with no bearing on what this repository exists to show.

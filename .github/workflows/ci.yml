@@ -21,8 +21,12 @@ jobs:
           java-version: '21'
           cache: maven
 
+      # The wrapper, not the runner's own mvn: the wrapper pins the Maven
+      # version, so CI builds with the same one a developer does. Calling `mvn`
+      # here meant the build that gates main could differ from the build that
+      # passed locally, for a reason nobody would think to look for.
       - name: Build and run tests
-        run: mvn -B verify
+        run: ./mvnw -B verify
 
       - name: Upload test report
         if: always()

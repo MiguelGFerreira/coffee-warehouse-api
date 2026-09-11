@@ -111,7 +111,27 @@ column — the same decision as occupancy, applied a second time. A lot becomes
 `SHIPPED` only once nothing of it remains stored: the status is terminal, so
 marking a partially dispatched lot would strand the remainder.
 
-**Next: Phase 5 — finishing.** See `docs/ROADMAP.md`.
+**Phase 5 done:** Spring Security with stateless JWT and two roles, the dev
+seed, and an OpenAPI document that is written rather than inherited.
+
+Authorization is request matchers in one `SecurityFilterChain`, never
+`@PreAuthorize` on the services — method security would scatter the policy into
+the layer that holds business invariants, and it would break
+`LedgerConcurrencyTest`, which drives `StockMovementService` from a thread pool
+where the `SecurityContext` does not propagate. The existing controller suites
+carry `@WithMockUser(roles = "ADMIN")` and go on proving business rules;
+`SecurityTest` uses real tokens over HTTP, because `@WithMockUser` would skip
+the bearer filter and the decoder, which is most of what it exists to check.
+
+401 and 403 are raised inside the filter chain, before the `DispatcherServlet`,
+so `@RestControllerAdvice` never sees them. A custom `AuthenticationEntryPoint`
+and `AccessDeniedHandler` keep them `problem+json` like every other error.
+
+The seed lives in `db/seed`, outside `db/migration`, and only the `dev` profile
+adds it to `spring.flyway.locations`.
+
+**The roadmap is complete.** See the "After Phase 5" section of
+`docs/ROADMAP.md` for what was deliberately left out and why.
 
 ---
 

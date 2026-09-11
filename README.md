@@ -93,6 +93,7 @@ AWAITING_ALLOCATION -> STORED -> RESERVED -> SHIPPED
 |---|---|
 | Language | Java 21 |
 | Framework | Spring Boot 3.5 (Web, Data JPA, Validation, Actuator) |
+| Security | Spring Security, stateless JWT (HS256) with role-based authorization |
 | Database | PostgreSQL 16 |
 | Migrations | Flyway |
 | Documentation | OpenAPI 3 / Swagger UI (springdoc) |
@@ -117,6 +118,39 @@ docker compose up --build
 | Swagger UI | http://localhost:8080/docs |
 | OpenAPI JSON | http://localhost:8080/v3/api-docs |
 | Health check | http://localhost:8080/actuator/health |
+
+Compose runs with the `dev` profile, which applies a seed: two producers, a
+warehouse with three positions, three lots across three crop years, a couple of
+months of movements and a shipment left in `DRAFT`. So the API has something to
+show the moment it starts.
+
+### Logging in
+
+Everything except login, health and the API description needs a bearer token.
+
+```bash
+curl -s -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"warehouse.admin","password":"admin123"}'
+```
+
+In Swagger UI, press **Authorize** and paste the `accessToken`.
+
+| Username | Password | Role | May |
+|---|---|---|---|
+| `warehouse.admin` | `admin123` | `ADMIN` | everything |
+| `floor.operator` | `operator123` | `OPERATOR` | read everything, record movements, compose and confirm shipments |
+
+Logging in as the operator and calling `POST /api/lots` returns `403`. That is
+the rule working, not a fault — maintaining the registry is not an operational
+act. These credentials exist so the role split can be tried; they are seeded
+only under the `dev` profile.
+
+> The signing key in `application.yml` is a development default and is committed
+> on purpose. Any deployment reachable from outside a laptop must override it
+> with `JWT_SECRET` — a key published in a public repository signs tokens
+> anyone can forge. The application refuses to start if it is shorter than 256
+> bits.
 
 ### Local development (app in the IDE, database in Docker)
 
@@ -151,6 +185,12 @@ Positions are loaded with `OPTIMISTIC_FORCE_INCREMENT`, which bumps the version 
 
 Optimistic rather than pessimistic because contention on a single position is rare in a warehouse: two operators putting stock into the same bin at the same instant is the exception, and paying for a row lock on every movement to serialize it would be paying for the exception all day. The trade is a retry when it does happen.
 
+**Authorization in the filter chain, not on the services.** `@PreAuthorize` on `StockMovementService` would scatter the access policy across the layer that holds business invariants — and it would break `LedgerConcurrencyTest`, which drives that service straight from a thread pool where the `SecurityContext` does not propagate. The test that proves the capacity invariant survives a race should not have to know that authentication exists. Request matchers in one `SecurityFilterChain` also keep the whole policy readable at a glance, which is what makes it reviewable.
+
+**Stateless JWT, symmetric key, no refresh token.** One service issues and verifies, so HS256 with a shared secret is the honest fit — asymmetric keys buy third-party verification that nothing here wants. Tokens are signed with Spring Security's own Nimbus encoder rather than a third-party JWT library. The trade-off is stated rather than hidden: a token carries the role it had at login, so a role change does not reach tokens already issued. Closing that would mean a database read on every request, which is the session this design exists to avoid; the lifetime is a shift instead.
+
+**Every error is `problem+json`, including the ones Spring Security writes.** Authentication and authorization fail inside the filter chain, before the `DispatcherServlet`, so `@RestControllerAdvice` never sees them and the framework writes an empty body by default. A custom entry point and access-denied handler restore the shape, because a client that parses one format for eighteen error types and a different one for the two it hits most often is being made to work around an inconsistency. The problem-type catalogue is published in the API description at `/docs`.
+
 **English domain vocabulary.** The domain was originally modeled in Portuguese and translated before Phase 2. The reasoning, the vocabulary table and the one-off migration exception it required are recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ---
@@ -161,7 +201,7 @@ Optimistic rather than pessimistic because contention on a single position is ra
 - [x] **Phase 2** — Registry: Producer, Warehouse, StoragePosition, Lot (CRUD, validation, standardized error handling, pagination)
 - [x] **Phase 3** — Movement ledger: inbound, transfer, outbound, balance calculation, invariants
 - [x] **Phase 4** — Shipment and blend: composition, weighted average, FIFO suggestion
-- [ ] **Phase 5** — Finishing: described OpenAPI, data seed, JWT authentication
+- [x] **Phase 5** — Finishing: JWT authentication with roles, dev seed, described OpenAPI
 
 ---
 

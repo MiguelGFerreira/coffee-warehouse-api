@@ -181,7 +181,7 @@ docs: close phase 4
 
 ---
 
-## Phase 5 — Finishing
+## Phase 5 — Finishing ✅
 
 **Deliverables**
 - OpenAPI described for real: `@Operation`, `@Schema`, request/response examples, error code descriptions. Do not ship the springdoc default
@@ -285,7 +285,7 @@ Named here so the omissions read as decisions rather than gaps:
 - **Rate limiting, account lockout, password rotation.** Operational concerns
   with no bearing on what this repository is meant to show.
 
-### Commit order
+### Commit order, as planned and as it happened
 
 ```
 docs: plan phase 5
@@ -294,16 +294,48 @@ feat(security): jwt filter chain with roles
 feat(api): login endpoint issuing the token
 feat(api): problem+json for 401 and 403
 test: authentication and authorization
-test: the existing suites run as an authenticated user
 feat(db): dev-profile seed
 docs(api): openapi descriptions, examples and the problem-type catalogue
 docs: final readme and decision log
 docs: close phase 5
 ```
 
+One commit from the plan is missing: `test: the existing suites run as an
+authenticated user`. Its `@WithMockUser` annotations had to travel with the
+filter chain itself, because separating them would have put a commit on `main`
+where 124 tests fail. A green history was worth more than the tidier split.
+
 **Done when:** a clean clone runs `docker compose up --build`, logs in at
 `/docs` with a seeded user, and every endpoint answers — with `./mvnw verify`
 green and no endpoint reachable without a token that should not be.
+
+**Verified.** 142 tests green. `docker compose up --build` on an empty volume
+applies six migrations plus the seed; both accounts log in; an anonymous read
+answers 401 with `WWW-Authenticate: Bearer` and a problem+json body; an operator
+is refused `POST /api/lots` with 403 and may record a movement; the published
+OpenAPI document describes all 37 operations, and all 130 of its error responses
+reference the RFC 7807 schema.
+
+---
+
+## After Phase 5
+
+The roadmap is finished. Anything below is a note for a future self rather than
+a commitment, and the golden rule still applies: a half-finished addition
+communicates worse than none.
+
+Things deliberately left undone, with the reasoning recorded in `docs/DECISIONS.md`:
+
+- refresh tokens (D7)
+- `created_by` on the audit columns (D7)
+- freezing the categorical blend composition, which would need JSONB or a child
+  table (D5)
+- defect type averaged by defect *count* rather than composed by weight, which
+  needs a column the schema does not have (D5)
+- cup quality as a ranked enum, so a blend could be limited by its worst
+  component rather than composed (D5)
+- a genuinely temporal ledger, able to accept a movement remembered out of order
+  by revalidating everything after it (D6)
 
 ---
 
