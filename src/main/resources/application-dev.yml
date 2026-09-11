@@ -1,0 +1,22 @@
+# Development profile.
+#
+# Its only job is to add db/seed to the migration locations. The seed is
+# deliberately not under db/migration, where it would run in every
+# environment -- including the test one, whose TRUNCATE would wipe it
+# before each case, and a production one, where fabricated rows have no
+# business being.
+#
+# compose.yaml activates this profile, which is what makes a clean clone
+# come up with a warehouse that already has coffee in it.
+spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/seed
+
+  jpa:
+    # Readable SQL in the console while poking at the API by hand. Off by
+    # default everywhere else: it is a debugging aid, not a log format.
+    show-sql: true
+
+logging:
+  level:
+    org.springframework.security: INFO

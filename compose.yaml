@@ -26,6 +26,14 @@ services:
       DB_URL: jdbc:postgresql://db:5432/coffee_warehouse
       DB_USER: coffee
       DB_PASSWORD: coffee
+      # Adds db/seed to the Flyway locations, so a clean clone comes up
+      # with a warehouse that already holds coffee. See
+      # src/main/resources/db/seed/R__seed.sql for the credentials.
+      SPRING_PROFILES_ACTIVE: dev
+      # The signing key is a development default committed in
+      # application.yml. Anything reachable from outside a laptop must
+      # override it here, or in the environment that runs this file.
+      JWT_SECRET: ${JWT_SECRET:-dev-only-signing-key-change-me-in-any-real-deployment}
     ports:
       - "8080:8080"
     healthcheck:
