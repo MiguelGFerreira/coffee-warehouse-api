@@ -1,6 +1,8 @@
 package tech.migueldev.coffeewarehouse.api.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -144,22 +146,67 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "constraint-violation", request);
     }
 
+    /**
+     * Validation on a method parameter rather than on a request body.
+     *
+     * A constraint written directly on a {@code @RequestParam} of a
+     * {@code @Validated} controller is checked by a method interceptor, not by
+     * the argument resolver, so it fails with this exception instead of
+     * {@link MethodArgumentNotValidException} -- and without a handler it leaves
+     * as a 500, which is the wrong answer twice over: the request is the
+     * client's mistake, and the default body is not problem+json like every
+     * other error here.
+     *
+     * Both paths therefore produce the same 400 and the same {@code errors}
+     * array. A caller has no reason to care whether the value it got wrong
+     * travelled in the query string or in the body.
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    ProblemDetail handleConstraintViolation(ConstraintViolationException ex,
+                                            HttpServletRequest request) {
+        List<FieldViolation> violations = ex.getConstraintViolations().stream()
+                .map(violation -> new FieldViolation(
+                        parameterNameOf(violation), violation.getMessage()))
+                .toList();
+
+        return validationProblem(violations, request.getRequestURI());
+    }
+
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
                                                                   HttpHeaders headers,
                                                                   HttpStatusCode status,
                                                                   WebRequest request) {
+        List<FieldViolation> violations = ex.getBindingResult().getFieldErrors().stream()
+                .map(error -> new FieldViolation(error.getField(), error.getDefaultMessage()))
+                .toList();
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(validationProblem(violations, null));
+    }
+
+    /**
+     * The property path of a method-level violation is
+     * {@code suggestPicking.weightKg} -- the Java method name followed by the
+     * parameter. Only the last segment is part of the API; the method name is an
+     * implementation detail that has no business being in a response body.
+     */
+    private static String parameterNameOf(ConstraintViolation<?> violation) {
+        String path = violation.getPropertyPath().toString();
+        int lastDot = path.lastIndexOf('.');
+        return lastDot < 0 ? path : path.substring(lastDot + 1);
+    }
+
+    private ProblemDetail validationProblem(List<FieldViolation> violations, String instance) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
                 "One or more fields are invalid");
         problem.setTitle("Validation failed");
         problem.setType(URI.create(PROBLEM_TYPE_PREFIX + "validation-failed"));
-
-        List<FieldViolation> violations = ex.getBindingResult().getFieldErrors().stream()
-                .map(error -> new FieldViolation(error.getField(), error.getDefaultMessage()))
-                .toList();
+        if (instance != null) {
+            problem.setInstance(URI.create(instance));
+        }
         problem.setProperty("errors", violations);
-
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problem);
+        return problem;
     }
 
     private ProblemDetail problem(HttpStatus status, String title, String detail,

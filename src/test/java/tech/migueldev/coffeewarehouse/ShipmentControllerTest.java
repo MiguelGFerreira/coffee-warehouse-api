@@ -488,4 +488,22 @@ class ShipmentControllerTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.lines", hasSize(0)))
                 .andExpect(jsonPath("$.shortfallKg").value(1000));
     }
+
+    /**
+     * The constraint here sits on a @RequestParam of a @Validated controller,
+     * which fails with ConstraintViolationException rather than the
+     * MethodArgumentNotValidException a request body raises. Without a handler
+     * of its own it left as a 500 carrying the Java method name, so this asserts
+     * the answer a client actually gets, not merely that the request is refused.
+     */
+    @Test
+    @DisplayName("refuses a non-positive weight as a validation error, not a server error")
+    void refusesANonPositiveWeight() throws Exception {
+        mockMvc.perform(get("/api/shipments/picking-suggestion").param("weightKg", "-5"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:validation-failed"))
+                .andExpect(jsonPath("$.errors", hasSize(1)))
+                // The parameter as the API names it -- not "suggestPicking.weightKg".
+                .andExpect(jsonPath("$.errors[0].field").value("weightKg"));
+    }
 }
