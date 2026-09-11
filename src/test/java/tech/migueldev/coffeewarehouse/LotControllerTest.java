@@ -25,12 +25,21 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+/**
+ * Runs as an administrator, which is what lets this suite go on proving the
+ * same business rules it proved before the API had a filter chain. Whether
+ * the role matrix itself is right is a different question, asked in
+ * {@link SecurityTest} -- mixing the two here would leave neither well
+ * covered.
+ */
 @AutoConfigureMockMvc
+@WithMockUser(roles = "ADMIN")
 class LotControllerTest extends AbstractIntegrationTest {
 
     @Autowired

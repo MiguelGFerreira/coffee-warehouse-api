@@ -22,6 +22,25 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+security:
+  jwt:
+    # A development default so that a clean clone runs with no setup, and an
+    # override so that a real deployment does not use it. It is committed on
+    # purpose and it is not a secret: anything reachable from outside a laptop
+    # must set JWT_SECRET, because a signing key published in a public
+    # repository signs tokens anyone can forge.
+    #
+    # Must be at least 32 bytes -- SecurityConfig refuses to start otherwise
+    # rather than quietly signing with a weak key.
+    secret: ${JWT_SECRET:dev-only-signing-key-change-me-in-any-real-deployment}
+    # Checked on every token, so one minted by another service that happens to
+    # share the secret is still refused here.
+    issuer: coffee-warehouse-api
+    # A warehouse shift, roughly. Long enough not to interrupt an operator
+    # mid-task, short enough that a leaked token is not permanent. There is no
+    # refresh token: see docs/ROADMAP.md for why that is out of scope.
+    ttl: 8h
+
 management:
   endpoints:
     web:
