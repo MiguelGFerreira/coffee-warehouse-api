@@ -185,10 +185,125 @@ docs: close phase 4
 
 **Deliverables**
 - OpenAPI described for real: `@Operation`, `@Schema`, request/response examples, error code descriptions. Do not ship the springdoc default
-- Data seed (migration `R__seed.sql` or a `dev` profile) so whoever clones the repo sees something working
+- Data seed so whoever clones the repo sees something working
 - JWT authentication with Spring Security — **only here, not before.** Spring Security shows up in almost every Java job posting and its absence gets noticed
 - Final README: CI badge, Swagger screenshot, revised technical decisions section
 - Commit history review
+
+### The six decisions this phase rests on
+
+**1. The real work is not adding a login. It is adding one without
+dismantling the suite that proves the other four phases.** 124 tests currently
+reach MockMvc with no authentication at all. The moment the filter chain exists
+every one of them takes a 401, and the tempting fix — a test configuration that
+permits everything — makes the suite lie: it would keep asserting business rules
+while silently asserting nothing about security.
+
+What is done instead is the opposite split. The existing controller suites get a
+class-level `@WithMockUser` with the role the endpoints under test require, and
+go on proving exactly what they proved before. A new suite, and only it, proves
+the security: no token is 401, the wrong role is 403, a valid login returns a
+token, and that token actually opens a real endpoint. Two concerns, two places.
+
+**2. Authorization lives in the filter chain, not on the service methods.**
+`@PreAuthorize` on `StockMovementService` would scatter the rules across the
+layer that is supposed to hold business invariants, and it would break
+`LedgerConcurrencyTest` — which calls the service directly from a thread pool,
+where the `SecurityContext` does not propagate. That test is the most valuable
+thing in the repository and it should not have to know that security exists.
+
+Request matchers in one `SecurityFilterChain` keep the whole policy readable at
+a glance, which is also what makes it reviewable:
+
+| Endpoint | Who |
+|---|---|
+| `POST /api/auth/login`, `/docs`, `/v3/api-docs`, `/actuator/health` | anyone |
+| every `GET` under `/api` | any authenticated user |
+| movements, shipments | `OPERATOR` or `ADMIN` |
+| registry writes (producer, warehouse, position, lot) | `ADMIN` |
+
+The cost, stated plainly: a rule that depended on the *contents* of a request
+rather than its path would not fit this table, and would have to move to method
+security. None currently does.
+
+**3. Users are rows, and the role decides something.** A username and password
+in `application.yml` would be a shortcut an interviewer notices. `V5` adds
+`app_user` — username unique, BCrypt hash, role, active flag — and the role is
+mapped `@Enumerated(EnumType.STRING)` against a `CHECK`, the same way
+`LotStatus` already is. An OPERATOR who can move stock but cannot invent a
+warehouse is an authorization model; a single `ROLE_USER` on every endpoint is
+decoration.
+
+**4. The token is signed with Spring Security's own primitives.** No third-party
+JWT library: `NimbusJwtEncoder` over an `ImmutableSecret` issues it and
+`NimbusJwtDecoder.withSecretKey` validates it, both already on the classpath
+through `oauth2-resource-server`. HS256 with a symmetric secret rather than RS256
+because there is one service issuing and one service verifying — asymmetric keys
+buy the ability to let a third party verify without being able to sign, and there
+is no third party here. Stateless, so no session and no CSRF token: there is no
+cookie to forge a request with.
+
+**5. A 401 does not reach `ApiExceptionHandler`, and that is the trap.**
+Authentication fails inside the filter chain, before the `DispatcherServlet`, so
+`@RestControllerAdvice` never sees it and Spring Security writes its own empty
+body. Every error in this API has been `application/problem+json` since Phase 2,
+and the two most common ones a client will actually hit would be the exceptions.
+
+A custom `AuthenticationEntryPoint` and `AccessDeniedHandler` serialize a
+`ProblemDetail` with `urn:problem-type:unauthenticated` and
+`urn:problem-type:forbidden`. Same shape as the other thirteen. This is the same
+class of hole as the `ConstraintViolationException` fixed before this phase: a
+path that bypasses the handler everything else goes through.
+
+**6. The seed lives outside `db/migration`.** An `R__seed.sql` there runs in
+every environment, including the test one, where `AbstractIntegrationTest`
+truncates it away before each case — useless in tests, and a real risk to the
+repository slices that count rows. It has no business in production either.
+
+It goes in `db/seed`, added to `spring.flyway.locations` only by the `dev`
+profile, which `compose.yaml` activates. The repeatable `R__` prefix is still
+right: the seed is re-applied whenever it changes rather than frozen behind a
+version number. It seeds users too, or the demo cannot be logged into.
+
+**Why SQL and not a `CommandLineRunner` calling the services.** A Java seeder
+could not create state the API would refuse, which is a genuine advantage. It
+loses to the fact that this seed has to write `stock_movement` rows with
+believable `occurred_at` values spread over past weeks — and the ordering rule
+from D6 makes that awkward to drive through the API, which validates against
+*now*. SQL writes the history directly, which is what a seed is for.
+
+### Deliberately out of scope
+
+Named here so the omissions read as decisions rather than gaps:
+
+- **Refresh tokens.** A short-lived access token plus a refresh token is the
+  right production answer. It doubles the auth surface to demonstrate the same
+  mechanism; the access token's lifetime is configurable instead.
+- **`created_by` on the audit columns.** Now that requests carry an identity,
+  stamping it is tempting. It touches every table and every migration for a
+  field nothing reads. If it ever lands it belongs with a real audit query.
+- **Rate limiting, account lockout, password rotation.** Operational concerns
+  with no bearing on what this repository is meant to show.
+
+### Commit order
+
+```
+docs: plan phase 5
+feat(db): app user migration
+feat(security): jwt filter chain with roles
+feat(api): login endpoint issuing the token
+feat(api): problem+json for 401 and 403
+test: authentication and authorization
+test: the existing suites run as an authenticated user
+feat(db): dev-profile seed
+docs(api): openapi descriptions, examples and the problem-type catalogue
+docs: final readme and decision log
+docs: close phase 5
+```
+
+**Done when:** a clean clone runs `docker compose up --build`, logs in at
+`/docs` with a seeded user, and every endpoint answers — with `./mvnw verify`
+green and no endpoint reachable without a token that should not be.
 
 ---
 
